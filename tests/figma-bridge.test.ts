@@ -52,6 +52,26 @@ describe("Figma Desktop Bridge server", () => {
     await expect(server.executeCode("return true", 50)).rejects.toThrow("No Figma Desktop Bridge connection");
   });
 
+  it("waits for a Desktop Bridge plugin that attaches after the app starts", async () => {
+    server = new FigmaBridgeServer({ preferredPort: 0 });
+    await server.start();
+    const waiting = server.waitForConnection(1_000);
+    const latePluginPromise = new Promise<Awaited<ReturnType<typeof connectPlugin>>>((resolve) => {
+      setTimeout(() => {
+        void connectPlugin(server!, "Late Plugin", "late-plugin").then(resolve);
+      }, 100);
+    });
+    await expect(waiting).resolves.toBe(true);
+    expect(server.status()).toMatchObject({
+      connected: true,
+      fileName: "Late Plugin",
+      fileKey: "late-plugin"
+    });
+    const latePlugin = await latePluginPromise;
+    latePlugin.client.close();
+    await waitForClose(latePlugin.client);
+  });
+
   it("reports HTTP health and ignores malformed plugin messages before file info arrives", async () => {
     server = new FigmaBridgeServer({ preferredPort: 0 });
     await server.start();

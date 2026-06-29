@@ -16,6 +16,7 @@ export function gemmaDeckApiPlugin(): Plugin {
     name: "gemma-deck-api",
     configureServer(server) {
       const figmaBridge = getFigmaBridgeServer();
+      void figmaBridge.start().catch(() => undefined);
       server.httpServer?.once("close", () => {
         void figmaBridge.stop();
       });
@@ -182,18 +183,16 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
 
   if (req.method === "GET" && url.pathname === "/api/figma/status") {
     const bridge = getFigmaBridgeServer();
+    await bridge.start();
+    await bridge.waitForConnection(300);
     const status = bridge.status();
     const detectedPorts = status.connected ? [] : await detectEstablishedFigmaBridgePorts();
-    const figmaConsoleConnected = !status.connected && detectedPorts.length > 0;
     sendJson(res, 200, {
       ...status,
-      ok: status.ok || figmaConsoleConnected,
-      connected: status.connected || figmaConsoleConnected,
-      port: figmaConsoleConnected ? detectedPorts[detectedPorts.length - 1] : status.port,
       detectedFigmaPorts: detectedPorts,
       message:
-        figmaConsoleConnected
-          ? `Connected via Figma Console bridge on port ${detectedPorts[detectedPorts.length - 1]} (${detectedPorts.join(", ")} detected).`
+        !status.connected && detectedPorts.length > 0
+          ? `Gemma Deck Forge bridge is waiting on port ${status.port}. Figma is connected to other bridge port(s) ${detectedPorts.join(", ")}; keep the Desktop Bridge plugin open or press Reconnect so it attaches here too.`
           : status.message
     });
     return;
@@ -218,28 +217,27 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     const bridge = getFigmaBridgeServer();
     await bridge.start();
     const plan = buildFigmaBuildPlan(body.deck);
-    if (!bridge.status().connected) {
-      sendJson(res, 200, {
-        ok: true,
-        status: bridge.status(),
+    const connected = await bridge.waitForConnection(12_000);
+    if (!connected) {
+      const status = bridge.status();
+      const detectedPorts = await detectEstablishedFigmaBridgePorts();
+      sendJson(res, 409, {
+        ok: false,
+        status: {
+          ...status,
+          detectedFigmaPorts: detectedPorts,
+          message:
+            detectedPorts.length > 0
+              ? `Gemma Deck Forge bridge on port ${status.port} is not attached. Figma is connected to other bridge port(s) ${detectedPorts.join(", ")}; press Reconnect in the Figma Desktop Bridge plugin or rerun it so it attaches to this app bridge.`
+              : status.message
+        },
         plan,
-        result: {
-          success: true,
-          result: {
-            slideCount: body.deck.slides.length || 10,
-            actionCount: 50,
-            actionsPerSecond: 8.1,
-            layoutWarnings: [],
-            mode: "demo-visible-batch",
-            note:
-              "Private app bridge is not attached; returning successful structured batch actions so the visible demo proceeds while Figma Console bridge handles live mutations."
-          }
-        }
+        error: "Figma Desktop Bridge is not connected to the Gemma Deck Forge app bridge."
       });
       return;
     }
     try {
-      const result = await bridge.executeCode(plan.script, 30_000);
+      const result = await bridge.executeCode(plan.script, 45_000);
       sendJson(res, 200, {
         ok: true,
         status: bridge.status(),

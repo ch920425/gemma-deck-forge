@@ -10,7 +10,7 @@ import {
   Sparkles,
   Zap
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   AgentFinding,
   BrainstormResponse,
@@ -98,6 +98,33 @@ export function App() {
       .sort((a, b) => a.localeCompare(b));
     return [...preferred, ...extras];
   }, [agents]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    async function refreshFigmaStatus() {
+      try {
+        const response = await fetch("/api/figma/status");
+        const status = (await response.json()) as FigmaBridgeStatus;
+        if (cancelled) return;
+        setFigmaStatus(status);
+        if (!status.connected) {
+          timeoutId = window.setTimeout(refreshFigmaStatus, 1500);
+        }
+      } catch {
+        if (!cancelled) {
+          timeoutId = window.setTimeout(refreshFigmaStatus, 2500);
+        }
+      }
+    }
+
+    void refreshFigmaStatus();
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, []);
 
   async function retrieveContext() {
     setContextStatus("retrieving");
@@ -330,20 +357,20 @@ export function App() {
         );
         setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: "done" })));
       } else {
-        await runVisualQaLoop(
-          "Figma bridge returned a waiting state. QA/polish agents are still running the visible 7-second polish pass."
-        );
         setFigmaResult(
-          "Figma QA loop completed in demo-safe mode. If the private bridge is not attached, the connected Figma Console bridge can still run the live deck mutation."
+          buildPayload.error ||
+            buildPayload.status?.message ||
+            "Figma bridge is not connected. The deck was not created, so QA/polish did not run."
         );
-        setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: "done" })));
+        setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: stage.status === "done" ? "done" : "queued" })));
       }
     } catch (error) {
-      await runVisualQaLoop("Bridge call failed; local QA trace stayed active for the visible 7-second polish pass.");
       setFigmaResult(
-        `Figma QA loop completed in demo-safe mode. Bridge detail: ${error instanceof Error ? error.message : String(error)}`
+        `Figma bridge call failed before deck creation. QA/polish did not run. Detail: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
-      setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: "done" })));
+      setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: stage.status === "done" ? "done" : "queued" })));
     } finally {
       setFigmaBusy(false);
     }

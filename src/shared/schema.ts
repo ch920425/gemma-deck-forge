@@ -124,6 +124,7 @@ export interface FigmaBridgeStatus {
   fileName?: string;
   fileKey?: string;
   currentPage?: string;
+  detectedFigmaPorts?: number[];
   message: string;
 }
 

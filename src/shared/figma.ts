@@ -301,8 +301,8 @@ async function renderThesis(frame, slide, index) {
 }
 async function renderEvidenceWall(frame, slide, index) {
   header(frame, slide, index, palette.ink, slide.accent);
-  text(frame, "headline", short(slide.headline, 82), 52, 76, 530, 36, palette.ink, true);
-  const positions = [[52, 176], [306, 176], [560, 176], [52, 322], [306, 322], [560, 322]];
+  text(frame, "headline", short(slide.headline, 76), 52, 76, 530, 34, palette.ink, true);
+  const positions = [[52, 202], [306, 202], [560, 202], [52, 336], [306, 336], [560, 336]];
   positions.forEach((pos, i) => {
     const bg = i % 2 === 0 ? palette.white : palette.light;
     card(frame, "evidence card " + i, pos[0], pos[1], 220, 104, bg, i === 0 ? slide.accent : palette.grid);
@@ -485,8 +485,16 @@ function validateGeneratedFrames(framesToCheck) {
       }
     });
     const headline = children.find(child => String(child.name || "").includes("headline"));
-    const firstCard = children.find(child => /card|panel|thumb|cue/.test(String(child.name || "")));
-    if (headline && firstCard && headline.y + headline.height > firstCard.y - 8) {
+    const firstContentBelow = headline
+      ? children
+          .filter(child => {
+            if (!/card|panel|thumb|cue/.test(String(child.name || "")) || child.y <= headline.y) return false;
+            const overlapsX = child.x < headline.x + headline.width && child.x + child.width > headline.x;
+            return overlapsX;
+          })
+          .sort((a, b) => a.y - b.y)[0]
+      : null;
+    if (headline && firstContentBelow && headline.y + headline.height > firstContentBelow.y - 8) {
       warnings.push("Slide " + (index + 1) + " headline too close to content");
     }
   });

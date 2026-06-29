@@ -126,6 +126,16 @@ export class FigmaBridgeServer {
     return result;
   }
 
+  async waitForConnection(timeoutMs: number): Promise<boolean> {
+    if (this.status().connected) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (this.status().connected) return true;
+    }
+    return this.status().connected;
+  }
+
   private async startOnAvailablePort(): Promise<void> {
     const fallbackPorts = this.fallbackPorts || DEFAULT_PORT_RANGE;
     const ports = this.preferredPort !== undefined

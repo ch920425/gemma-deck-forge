@@ -49,14 +49,89 @@ test("runs brainstorm, outline, and Figma finalizer without exposing raw JSON", 
   await expect(page.locator(".slideRequirement")).toHaveCount(10);
   await expect(page.locator(".slideCard .layout", { hasText: "Critique / Fix Pass" })).toHaveCount(1);
 
+  const figmaHarness = await connectFigmaHarness(page);
   const figmaStartedAt = Date.now();
   await page.getByRole("button", { name: /Generate deck/i }).click();
+  const command = await figmaHarness.nextExecuteCommand();
+  expect(String(command.params?.code || "")).toContain("figma.createSection");
+  await new Promise((resolve) => setTimeout(resolve, 8_200));
+  figmaHarness.complete(command.id, {
+    success: true,
+    result: { slideCount: 10, actionCount: 50, actionsPerSecond: 5.9, layoutWarnings: [] }
+  });
   await expect(page.getByRole("heading", { name: "Pixel-perfect Figma Deck Finalizer" })).toBeVisible();
   await expect(page.getByText(/visual QA|overlap|screenshot/i).first()).toBeVisible();
   await expect(page.locator(".stageCard")).toHaveCount(50);
-  await expect(page.getByText(/QA-gated|demo-safe mode|Bridge detail/i)).toBeVisible({ timeout: 30_000 });
-  expect(Date.now() - figmaStartedAt).toBeGreaterThanOrEqual(6_800);
+  await expect(page.getByText(/Built and QA-gated/i)).toBeVisible({ timeout: 40_000 });
+  expect(Date.now() - figmaStartedAt).toBeGreaterThanOrEqual(14_800);
+  await expect(page.getByText(/demo-safe mode|Bridge detail/i)).toHaveCount(0);
   await expect(page.getByText("Figma JSON")).toHaveCount(0);
   await expect(page.getByText(/deckTitle|actionsPerSecond/)).toHaveCount(0);
   await expect(page.getByText(hiddenAudience)).toHaveCount(0);
+  figmaHarness.close();
 });
+
+interface FigmaHarnessCommand {
+  id: string;
+  method?: string;
+  params?: { code?: string; timeout?: number };
+}
+
+async function connectFigmaHarness(page: import("@playwright/test").Page) {
+  const status = await page.evaluate(async () => {
+    return fetch("/api/figma/status").then((response) => response.json() as Promise<{ port?: number }>);
+  });
+  if (!status.port) throw new Error("Figma bridge status did not expose a port");
+
+  const socket = new WebSocket(`ws://localhost:${status.port}`);
+  const messages: FigmaHarnessCommand[] = [];
+  socket.addEventListener("message", (event) => {
+    messages.push(JSON.parse(String(event.data)) as FigmaHarnessCommand);
+  });
+  await waitForSocketOpen(socket);
+  socket.send(
+    JSON.stringify({
+      type: "FILE_INFO",
+      data: {
+        fileName: "Gemma Deck Forge E2E Harness",
+        fileKey: "e2e-harness",
+        currentPage: "Page 1",
+        editorType: "figma"
+      }
+    })
+  );
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async () => {
+          const response = await fetch("/api/figma/status");
+          const status = (await response.json()) as { connected?: boolean; fileName?: string };
+          return `${status.connected}:${status.fileName || ""}`;
+        }),
+      { timeout: 5_000 }
+    )
+    .toBe("true:Gemma Deck Forge E2E Harness");
+
+  return {
+    async nextExecuteCommand() {
+      await expect
+        .poll(() => messages.find((message) => message.method === "EXECUTE_CODE")?.id || "", { timeout: 20_000 })
+        .not.toBe("");
+      return messages.find((message) => message.method === "EXECUTE_CODE")!;
+    },
+    complete(id: string, result: unknown) {
+      socket.send(JSON.stringify({ id, result }));
+    },
+    close() {
+      socket.close();
+    }
+  };
+}
+
+function waitForSocketOpen(socket: WebSocket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    socket.addEventListener("open", () => resolve(), { once: true });
+    socket.addEventListener("error", () => reject(new Error("Figma harness socket failed to open")), { once: true });
+  });
+}
