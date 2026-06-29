@@ -255,6 +255,7 @@ describe("figma handoff", () => {
     expect(generationScripts[0]).toContain("blank frames");
     expect(generationScripts.at(-1)).toContain("ready deck");
     expect(qaScripts[0]).toContain("Gemma VLM");
+    expect(qaScripts[0]).toContain("getNodeByIdAsync");
     expect(qaScripts[0]).toContain("screenshotObservations");
     expect(qaScripts[0]).toContain("maxDiagnoseFixLoops");
     expect(qaScripts.join("\n")).toContain("Feedback applied");

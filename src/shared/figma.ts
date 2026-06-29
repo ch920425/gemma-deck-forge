@@ -469,7 +469,7 @@ const startedAt = Date.now();
 const input = ${payload};
 await figma.loadAllPagesAsync();
 const page = figma.currentPage;
-let section = input.sectionId ? figma.getNodeById(input.sectionId) : null;
+let section = input.sectionId ? await figma.getNodeByIdAsync(input.sectionId) : null;
 if (!section || section.type !== "SECTION") {
   section = page.findOne(node => node.type === "SECTION" && node.name === input.sectionName);
 }
