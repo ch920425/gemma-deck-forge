@@ -4,7 +4,7 @@ Gemma Deck Forge turns a rough idea into a polished, editable Figma deck with a 
 
 [Watch the 60-second demo](https://www.loom.com/share/3bbedfe9f48c4511a5c635e63b444ff4) · [Open the demo slides PDF](demo_video_slides.pdf) · [Read the benchmark notes](BENCHMARKS.md)
 
-![Generated Figma deck sample](docs/assets/demo-slide-grid.png)
+![Generated Figma deck quality preview](docs/assets/figma-deck-quality-preview.png)
 
 ## What It Does
 
