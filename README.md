@@ -12,6 +12,11 @@ Agentic hackathon demo for turning idea/context plus `gbrain` Supabase output in
 - Shows a 50-stage build/review/revise/polish/finalize board so the Figma burst can be demoed from the product UI.
 - Persists feedback locally so later generations can incorporate what to keep or change.
 
+## Planning Docs
+
+- [Dynamic Agentic Slide Demo PRD](docs/dynamic-agentic-slide-demo-prd.md)
+- [Dynamic Agentic Slide Demo Technical Spec](docs/dynamic-agentic-slide-demo-tech-spec.md)
+
 ## Local Setup
 
 ```bash
