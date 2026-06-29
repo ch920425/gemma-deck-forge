@@ -3,7 +3,6 @@ import type { Plugin } from "vite";
 import {
   FIGMA_BATCH_INTERVAL_MS,
   FIGMA_GENERATION_BATCH_INTERVAL_MS,
-  FIGMA_QA_BATCH_INTERVAL_MS,
   buildFigmaBuildPlan,
   buildFigmaGenerationBatchScripts,
   buildFigmaHandoffPrompt,
@@ -402,6 +401,7 @@ async function executeFigmaQaSequence(
   options: { sectionId: string; feedback?: string }
 ): Promise<Record<string, unknown>> {
   const startedAt = Date.now();
+  const maxLoops = figmaQaMaxLoops();
   const batchResults: Array<Record<string, unknown>> = [];
   let actionCount = 0;
   let slideCount = 0;
@@ -410,72 +410,94 @@ async function executeFigmaQaSequence(
   let frameIds: string[] = [];
   let layoutWarnings: string[] = [];
   let feedbackApplied = Boolean(options.feedback?.trim());
-  let qaEvidence: Record<string, unknown> = {
-    sectionId,
-    screenshotCount: 0,
-    exportCount: 0,
-    finalScreenshotReady: false,
-    screenshots: [],
-    visionDiagnoses: []
-  };
-  let visionDiagnoses: unknown[] = [];
+  const initialExportPayload = unwrapBridgeResult(
+    await bridge.executeCode(
+      buildFigmaQaBatchScript(
+        deck,
+        {
+          sectionId: options.sectionId,
+          feedback: options.feedback,
+          qaMode: "export"
+        },
+        0,
+        maxLoops
+      ),
+      15_000
+    )
+  );
+  batchResults.push(initialExportPayload);
+  slideCount = Math.max(slideCount, numeric(initialExportPayload.slideCount));
+  sectionId = stringValue(initialExportPayload.sectionId) || sectionId;
+  sectionName = stringValue(initialExportPayload.sectionName) || sectionName;
+  if (Array.isArray(initialExportPayload.frameIds)) frameIds = initialExportPayload.frameIds.map(String);
+  if (Array.isArray(initialExportPayload.layoutWarnings)) layoutWarnings = initialExportPayload.layoutWarnings.map(String);
+  feedbackApplied = feedbackApplied || initialExportPayload.feedbackApplied === true;
 
-  for (let index = 0; index < 10; index += 1) {
-    const batchStartedAt = Date.now();
-    const script = buildFigmaQaBatchScript(
-      deck,
-      {
-        sectionId: options.sectionId,
-        feedback: options.feedback,
-        visionDiagnoses
-      },
-      index,
-      10
-    );
-    const rawResult = await bridge.executeCode(script, index === 0 || index === 9 ? 8_000 : 3_000);
-    const payload = unwrapBridgeResult(rawResult);
-    batchResults.push(payload);
-    actionCount += numeric(payload.actionCount);
-    slideCount = Math.max(slideCount, numeric(payload.slideCount));
-    sectionId = stringValue(payload.sectionId) || sectionId;
-    sectionName = stringValue(payload.sectionName) || sectionName;
-    if (Array.isArray(payload.frameIds)) frameIds = payload.frameIds.map(String);
-    if (Array.isArray(payload.layoutWarnings)) layoutWarnings = payload.layoutWarnings.map(String);
-    feedbackApplied = feedbackApplied || payload.feedbackApplied === true;
-
-    const screenshots = extractScreenshotEvidence(payload);
-    if (screenshots.length) {
-      const sanitizedScreenshots = screenshots.map(({ dataUrl: _dataUrl, ...screenshot }) => ({
-        ...screenshot,
-        hasImageInput: Boolean(_dataUrl)
-      }));
-      qaEvidence = {
+  const initialScreenshots = extractScreenshotEvidence(initialExportPayload);
+  const slides = deck.slides.slice(0, Math.max(1, Math.min(10, deck.slides.length || 10)));
+  const slideStates = await Promise.all(
+    slides.map((slide, index) =>
+      runIndependentSlideQaLoop(bridge, deck, {
+        slide,
+        slideNumber: index + 1,
         sectionId,
-        screenshotCount: screenshots.length,
-        exportCount: screenshots.length,
-        finalScreenshotReady: payload.qaEvidence && typeof payload.qaEvidence === "object"
-          ? Boolean((payload.qaEvidence as { finalScreenshotReady?: unknown }).finalScreenshotReady)
-          : index === 9,
-        screenshots: sanitizedScreenshots,
-        visionDiagnoses
-      };
-      if (index === 0) {
-        visionDiagnoses = await runGemmaSlideVisionQa(deck, screenshots, index, visionDiagnoses);
-      }
-    }
+        feedback: options.feedback,
+        maxLoops,
+        initialScreenshot: screenshotForSlide(initialScreenshots, index + 1)
+      })
+    )
+  );
 
-    if (index < 9) {
-      const elapsedMs = Date.now() - batchStartedAt;
-      await sleep(Math.max(0, FIGMA_QA_BATCH_INTERVAL_MS - elapsedMs));
-    }
+  for (const state of slideStates) {
+    actionCount += state.actionCount;
+    batchResults.push(...state.batchResults);
   }
+
+  const visionDiagnoses = slideStates.flatMap((state) => state.diagnoses);
+  const finalPayload = unwrapBridgeResult(
+    await bridge.executeCode(
+      buildFigmaQaBatchScript(
+        deck,
+        {
+          sectionId,
+          feedback: options.feedback,
+          visionDiagnoses,
+          qaMode: "finalize"
+        },
+        maxLoops,
+        maxLoops + 1
+      ),
+      15_000
+    )
+  );
+  batchResults.push(finalPayload);
+  actionCount += numeric(finalPayload.actionCount);
+  slideCount = Math.max(slideCount, numeric(finalPayload.slideCount));
+  sectionId = stringValue(finalPayload.sectionId) || sectionId;
+  sectionName = stringValue(finalPayload.sectionName) || sectionName;
+  if (Array.isArray(finalPayload.frameIds)) frameIds = finalPayload.frameIds.map(String);
+  if (Array.isArray(finalPayload.layoutWarnings)) layoutWarnings = finalPayload.layoutWarnings.map(String);
+  feedbackApplied = feedbackApplied || finalPayload.feedbackApplied === true;
+
+  const finalScreenshots = extractScreenshotEvidence(finalPayload);
+  const sanitizedFinalScreenshots = finalScreenshots.map(sanitizeScreenshotEvidence);
+  const passedSlideCount = slideStates.filter((state) => state.passFail === "pass").length;
+  const qaEvidence: Record<string, unknown> = {
+    sectionId,
+    screenshotCount: finalScreenshots.length,
+    exportCount: finalScreenshots.length,
+    finalScreenshotReady: finalScreenshots.length >= slides.length,
+    screenshots: sanitizedFinalScreenshots,
+    visionDiagnoses
+  };
 
   const elapsedSec = (Date.now() - startedAt) / 1000;
   return {
     mode: "qa",
-    batchCount: 10,
-    bridgeCommandCount: 10,
-    batchIntervalMs: FIGMA_QA_BATCH_INTERVAL_MS,
+    agenticLoopMode: "per-slide-independent",
+    batchCount: batchResults.length,
+    bridgeCommandCount: batchResults.length,
+    batchIntervalMs: null,
     sectionId,
     sectionName,
     slideCount,
@@ -485,7 +507,9 @@ async function executeFigmaQaSequence(
     actionsPerSecond: Number((actionCount / Math.max(0.001, elapsedSec)).toFixed(2)),
     feedbackApplied,
     layoutWarnings,
-    maxDiagnoseFixLoops: 10,
+    maxDiagnoseFixLoops: maxLoops,
+    passedSlideCount,
+    slideQaStates: slideStates.map(summarizeSlideQaState),
     qaEvidence,
     batchResults
   };
@@ -501,6 +525,51 @@ interface ScreenshotEvidence {
   finalScreenshotReady?: boolean;
 }
 
+interface SlideQaLoopOptions {
+  slide: DeckSpec["slides"][number];
+  slideNumber: number;
+  sectionId: string;
+  feedback?: string;
+  maxLoops: number;
+  initialScreenshot?: ScreenshotEvidence;
+}
+
+interface SlideQaExecution {
+  loopIndex: number;
+  actionCount: number;
+  fixes: unknown[];
+  result: Record<string, unknown>;
+}
+
+interface SlideVisionDiagnosis {
+  slideId: string;
+  slideNumber: number;
+  loopIndex: number;
+  passFail: "pass" | "fail";
+  status: string;
+  confidence: number;
+  screenshotObservations: unknown[];
+  issues: unknown[];
+  figmaFixes: unknown[];
+  copyFixes?: unknown[];
+  cohesionNotes?: unknown;
+  noMoreIssues: boolean;
+  [key: string]: unknown;
+}
+
+interface SlideQaState {
+  slideId: string;
+  slideNumber: number;
+  loopCount: number;
+  passFail: "pass" | "fail";
+  passed: boolean;
+  actionCount: number;
+  diagnoses: SlideVisionDiagnosis[];
+  executions: SlideQaExecution[];
+  screenshots: Array<Omit<ScreenshotEvidence, "dataUrl"> & { hasImageInput: boolean }>;
+  batchResults: Array<Record<string, unknown>>;
+}
+
 function extractScreenshotEvidence(payload: Record<string, unknown>): ScreenshotEvidence[] {
   if (Array.isArray(payload.screenshotEvidence)) {
     return payload.screenshotEvidence.filter((item): item is ScreenshotEvidence => Boolean(item && typeof item === "object"));
@@ -512,31 +581,163 @@ function extractScreenshotEvidence(payload: Record<string, unknown>): Screenshot
   return [];
 }
 
+async function runIndependentSlideQaLoop(
+  bridge: FigmaBridgeServer,
+  deck: DeckSpec,
+  options: SlideQaLoopOptions
+): Promise<SlideQaState> {
+  const slideId = `s${options.slideNumber}`;
+  const state: SlideQaState = {
+    slideId,
+    slideNumber: options.slideNumber,
+    loopCount: 0,
+    passFail: "fail",
+    passed: false,
+    actionCount: 0,
+    diagnoses: [],
+    executions: [],
+    screenshots: [],
+    batchResults: []
+  };
+  let currentScreenshot = options.initialScreenshot;
+  if (currentScreenshot) state.screenshots.push(sanitizeScreenshotEvidence(currentScreenshot));
+
+  for (let loopIndex = 0; loopIndex < options.maxLoops; loopIndex += 1) {
+    state.loopCount = loopIndex + 1;
+    if (loopIndex > 0 || !currentScreenshot) {
+      const exportPayload = unwrapBridgeResult(
+        await bridge.executeCode(
+          buildFigmaQaBatchScript(
+            deck,
+            {
+              sectionId: options.sectionId,
+              feedback: options.feedback,
+              qaMode: "export",
+              targetSlideIds: [slideId]
+            },
+            loopIndex,
+            options.maxLoops
+          ),
+          10_000
+        )
+      );
+      state.batchResults.push(exportPayload);
+      currentScreenshot = screenshotForSlide(extractScreenshotEvidence(exportPayload), options.slideNumber) || currentScreenshot;
+      if (currentScreenshot) state.screenshots.push(sanitizeScreenshotEvidence(currentScreenshot));
+    }
+
+    const screenshots = currentScreenshot ? [currentScreenshot] : [];
+    const diagnoses = await runGemmaSlideVisionQa(deck, screenshots, loopIndex, state.diagnoses, {
+      slide: options.slide,
+      slideNumber: options.slideNumber,
+      feedback: options.feedback,
+      executionHistory: state.executions
+    });
+    const diagnosis = normalizeVisionDiagnosis(
+      diagnoses.find((item) => stringValue((item as { slideId?: unknown }).slideId) === slideId) || diagnoses[0],
+      {
+        slideId,
+        slideNumber: options.slideNumber,
+        loopIndex,
+        fallbackPass: loopIndex > 0
+      }
+    );
+    state.diagnoses.push(diagnosis);
+    state.passFail = diagnosis.passFail;
+    state.passed = isSlideQaPassed(diagnosis);
+    if (state.passed) break;
+
+    const fixDiagnosis = diagnosis.figmaFixes.length ? diagnosis : withFallbackFix(diagnosis);
+    const fixPayload = unwrapBridgeResult(
+      await bridge.executeCode(
+        buildFigmaQaBatchScript(
+          deck,
+          {
+            sectionId: options.sectionId,
+            feedback: options.feedback,
+            visionDiagnoses: [fixDiagnosis],
+            qaMode: "fix",
+            targetSlideIds: [slideId]
+          },
+          loopIndex,
+          options.maxLoops
+        ),
+        8_000
+      )
+    );
+    state.actionCount += numeric(fixPayload.actionCount);
+    state.batchResults.push(fixPayload);
+    state.executions.push({
+      loopIndex: loopIndex + 1,
+      actionCount: numeric(fixPayload.actionCount),
+      fixes: fixDiagnosis.figmaFixes,
+      result: compactBridgeResult(fixPayload)
+    });
+  }
+
+  return state;
+}
+
 async function runGemmaSlideVisionQa(
   deck: DeckSpec,
   screenshots: ScreenshotEvidence[],
   loopIndex: number,
-  previousDiagnoses: unknown[]
-): Promise<unknown[]> {
+  previousDiagnoses: unknown[],
+  options: {
+    slide?: DeckSpec["slides"][number];
+    slideNumber?: number;
+    feedback?: string;
+    executionHistory?: SlideQaExecution[];
+  } = {}
+): Promise<SlideVisionDiagnosis[]> {
+  const fallbackSlideNumber = options.slideNumber || 1;
   if (!hasCerebrasKey() || process.env.NODE_ENV === "test" || process.env.GEMMA_ENABLE_LIVE_VISION_QA === "0") {
-    return screenshots.map((screenshot, index) => ({
-      slideId: screenshot.slideId || `s${index + 1}`,
-      loopIndex: loopIndex + 1,
-      status: "diagnosed",
-      screenshotObservations: ["Screenshot exported for Gemma VLM review."],
-      issues: [],
-      figmaFixes: [
+    const pass = loopIndex > 0;
+    const fallbackScreenshots = screenshots.length ? screenshots : [{ slideId: `s${fallbackSlideNumber}` }];
+    return fallbackScreenshots.map((screenshot, index) =>
+      normalizeVisionDiagnosis(
         {
-          operation: "cleanFinalLayout",
-          targetNodeName: screenshot.frameId || `frame-${index + 1}`,
-          reason: "Deterministic cleanup keeps text inside safe bounds and removes QA tags."
+          slideId: screenshot.slideId || `s${fallbackSlideNumber + index}`,
+          slideNumber: fallbackSlideNumber + index,
+          loopIndex: loopIndex + 1,
+          passFail: pass ? "pass" : "fail",
+          status: pass ? "pass" : "fail",
+          confidence: pass ? 0.91 : 0.62,
+          screenshotObservations: pass
+            ? ["Recheck has no remaining visible overlap, clipping, or QA tag issue."]
+            : ["Screenshot exported for Gemma VLM review; deterministic cleanup should rebuild the slide inside safe bounds."],
+          issues: pass
+            ? []
+            : [
+                {
+                  severity: "high",
+                  evidenceFromImage: "Prior deck screenshots showed text overlap or unsafe bounds.",
+                  whyItLooksBroken: "The slide needs a clean layout rebuild before final readiness.",
+                  exactRepairIntent: "Rebuild clean final layout, clamp text, and remove temporary QA overlays."
+                }
+              ],
+          figmaFixes: pass
+            ? []
+            : [
+                {
+                  operation: "cleanFinalLayout",
+                  targetNodeName: screenshot.frameId || `frame-${fallbackSlideNumber + index}`,
+                  reason: "Deterministic cleanup keeps text inside safe bounds and removes QA tags."
+                }
+              ],
+          noMoreIssues: pass
+        },
+        {
+          slideId: screenshot.slideId || `s${fallbackSlideNumber + index}`,
+          slideNumber: fallbackSlideNumber + index,
+          loopIndex,
+          fallbackPass: pass
         }
-      ],
-      noMoreIssues: loopIndex >= 8
-    }));
+      )
+    );
   }
 
-  const diagnoses: unknown[] = [];
+  const diagnoses: SlideVisionDiagnosis[] = [];
   for (let offset = 0; offset < screenshots.length; offset += 5) {
     const group = screenshots.slice(offset, offset + 5).filter((screenshot) => screenshot.dataUrl);
     if (!group.length) continue;
@@ -546,7 +747,7 @@ async function runGemmaSlideVisionQa(
           {
             role: "system",
             content:
-              "You are Gemma 4 VLM slide QA. Inspect each slide image for overlap, clipped text, text outside components, unreadable sizing, crop, contrast, and bad slide design. Return compact JSON only with diagnoses[]. Each diagnosis must include slideId, issues[], figmaFixes[], noMoreIssues, and confidence."
+              "You are Gemma 4 VLM slide QA. Inspect each slide image for overlap, clipped text, text outside components, unreadable sizing, crop, contrast, and bad slide design. Return compact JSON only with diagnoses[]. Each diagnosis must include slideId, loopIndex, passFail, status, confidence, screenshotObservations[], issues[], figmaFixes[], noMoreIssues. passFail must be exactly pass or fail."
           },
           {
             role: "user",
@@ -557,9 +758,13 @@ async function runGemmaSlideVisionQa(
                   {
                     deckTitle: deck.title,
                     loopIndex: loopIndex + 1,
+                    slideNumber: options.slideNumber,
+                    slideSpec: options.slide,
+                    manualFeedback: options.feedback || "",
                     previousDiagnoses,
+                    executionHistory: options.executionHistory || [],
                     instruction:
-                      "Review every provided slide image. Produce Figma EXECUTE-optimized fixes that keep all text inside safe bounds and remove broken visual artifacts."
+                      "Review every provided slide image. Return pass only when the slide is visually ready. If fail, produce surgical Figma EXECUTE-optimized fixes that keep all text inside safe bounds, remove broken visual artifacts, and do not duplicate prior executed fixes."
                   },
                   null,
                   2
@@ -574,17 +779,147 @@ async function runGemmaSlideVisionQa(
         ],
         1400
       );
-      diagnoses.push(...(Array.isArray(result.value.diagnoses) ? result.value.diagnoses : []));
+      const rawDiagnoses = Array.isArray(result.value.diagnoses) ? result.value.diagnoses : [];
+      diagnoses.push(
+        ...rawDiagnoses.map((diagnosis, index) =>
+          normalizeVisionDiagnosis(diagnosis, {
+            slideId: group[index]?.slideId || `s${fallbackSlideNumber + offset + index}`,
+            slideNumber: Number(String(group[index]?.slideId || "").replace(/\D/g, "")) || fallbackSlideNumber + offset + index,
+            loopIndex,
+            fallbackPass: false
+          })
+        )
+      );
     } catch (error) {
-      diagnoses.push({
-        loopIndex: loopIndex + 1,
-        status: "vision_error_fallback",
-        error: error instanceof Error ? error.message : String(error),
-        figmaFixes: [{ operation: "cleanFinalLayout", reason: "Vision call failed, deterministic layout cleanup continues." }]
-      });
+      diagnoses.push(
+        normalizeVisionDiagnosis(
+          {
+            slideId: `s${fallbackSlideNumber}`,
+            loopIndex: loopIndex + 1,
+            passFail: "fail",
+            status: "vision_error_fallback",
+            confidence: 0.4,
+            error: error instanceof Error ? error.message : String(error),
+            issues: [{ severity: "high", exactRepairIntent: "Run deterministic cleanup because VLM review failed." }],
+            figmaFixes: [{ operation: "cleanFinalLayout", reason: "Vision call failed, deterministic layout cleanup continues." }]
+          },
+          {
+            slideId: `s${fallbackSlideNumber}`,
+            slideNumber: fallbackSlideNumber,
+            loopIndex,
+            fallbackPass: false
+          }
+        )
+      );
     }
   }
-  return diagnoses.length ? diagnoses : previousDiagnoses;
+  return diagnoses.length ? diagnoses : previousDiagnoses.map((diagnosis, index) =>
+    normalizeVisionDiagnosis(diagnosis, {
+      slideId: `s${fallbackSlideNumber + index}`,
+      slideNumber: fallbackSlideNumber + index,
+      loopIndex,
+      fallbackPass: false
+    })
+  );
+}
+
+function figmaQaMaxLoops(): number {
+  const value = Number(process.env.GEMMA_QA_MAX_LOOPS || 10);
+  return Math.min(10, Math.max(1, Number.isFinite(value) ? Math.floor(value) : 10));
+}
+
+function screenshotForSlide(screenshots: ScreenshotEvidence[], slideNumber: number): ScreenshotEvidence | undefined {
+  return screenshots.find((screenshot) => screenshot.slideId === `s${slideNumber}`) || screenshots[slideNumber - 1];
+}
+
+function sanitizeScreenshotEvidence(screenshot: ScreenshotEvidence): Omit<ScreenshotEvidence, "dataUrl"> & { hasImageInput: boolean } {
+  const { dataUrl: _dataUrl, ...rest } = screenshot;
+  return {
+    ...rest,
+    hasImageInput: Boolean(_dataUrl)
+  };
+}
+
+function normalizeVisionDiagnosis(
+  value: unknown,
+  fallback: { slideId: string; slideNumber: number; loopIndex: number; fallbackPass: boolean }
+): SlideVisionDiagnosis {
+  const candidate = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const rawPassFail = String(candidate.passFail || candidate.status || "").toLowerCase();
+  const issues = arrayValue(candidate.issues);
+  const passFail: "pass" | "fail" =
+    rawPassFail === "pass" || (candidate.noMoreIssues === true && issues.length === 0 && fallback.fallbackPass)
+      ? "pass"
+      : "fail";
+  const confidence = typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence)
+    ? candidate.confidence
+    : passFail === "pass"
+      ? 0.86
+      : 0.6;
+  return {
+    ...candidate,
+    slideId: stringValue(candidate.slideId) || fallback.slideId,
+    slideNumber: numeric(candidate.slideNumber) || fallback.slideNumber,
+    loopIndex: numeric(candidate.loopIndex) || fallback.loopIndex + 1,
+    passFail,
+    status: passFail,
+    confidence,
+    screenshotObservations: arrayValue(candidate.screenshotObservations),
+    issues,
+    figmaFixes: arrayValue(candidate.figmaFixes).length ? arrayValue(candidate.figmaFixes) : arrayValue(candidate.fixes),
+    copyFixes: arrayValue(candidate.copyFixes),
+    cohesionNotes: candidate.cohesionNotes,
+    noMoreIssues: passFail === "pass" && issues.length === 0
+  };
+}
+
+function isSlideQaPassed(diagnosis: SlideVisionDiagnosis): boolean {
+  return diagnosis.passFail === "pass" && diagnosis.noMoreIssues && diagnosis.issues.length === 0 && diagnosis.confidence >= 0.75;
+}
+
+function withFallbackFix(diagnosis: SlideVisionDiagnosis): SlideVisionDiagnosis {
+  return {
+    ...diagnosis,
+    passFail: "fail",
+    status: "fail",
+    noMoreIssues: false,
+    figmaFixes: [
+      {
+        operation: "cleanFinalLayout",
+        targetNodeName: diagnosis.slideId,
+        reason: "Fallback repair when VLM returned fail without executable figmaFixes."
+      }
+    ]
+  };
+}
+
+function compactBridgeResult(payload: Record<string, unknown>): Record<string, unknown> {
+  return {
+    mode: payload.mode,
+    batchIndex: payload.batchIndex,
+    actionCount: payload.actionCount,
+    layoutWarnings: payload.layoutWarnings,
+    feedbackApplied: payload.feedbackApplied
+  };
+}
+
+function summarizeSlideQaState(state: SlideQaState): Record<string, unknown> {
+  return {
+    slideId: state.slideId,
+    slideNumber: state.slideNumber,
+    loopCount: state.loopCount,
+    passFail: state.passFail,
+    passed: state.passed,
+    actionCount: state.actionCount,
+    diagnosisCount: state.diagnoses.length,
+    executionCount: state.executions.length,
+    screenshotCount: state.screenshots.length,
+    lastDiagnosis: state.diagnoses.at(-1)
+  };
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function unwrapBridgeResult(rawResult: unknown): Record<string, unknown> {

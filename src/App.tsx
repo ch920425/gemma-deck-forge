@@ -474,16 +474,16 @@ export function App() {
     setFigmaResult(
       feedback.trim()
         ? "Manual feedback received. Gemma VLM QA agents are rerunning visual polish and applying the requested change."
-        : "Starting Gemma VLM QA: all ten slide screenshots are VLM input, then structured diagnosis JSON becomes bridge-executable Figma fixes."
+        : "Starting Gemma VLM QA: each slide screenshot is reviewed independently until its pass/fail eval returns pass, then final deck cleanup removes QA tags."
     );
     const qaPlan: FigmaBuildPlan = {
       script: "",
       stages: createImmediateFigmaStages(deck, "qa"),
       checklist: [
         "Gemma VLM agents inspect component placement, overlap, font size, crop, color, and copy clarity.",
-        "Every slide gets screenshot input, structured JSON diagnosis, bridge-executable fixes, and up to ten diagnose/fix/recheck loops.",
-        "QA waits for all slide image reviewers first, then executes fix batches against the pinned Figma section.",
-        "The final QA batch removes all QA status tags, rails, diagnosis labels, and temporary feedback tags.",
+        "Every slide gets screenshot input, structured pass/fail JSON diagnosis, bridge-executable fixes, and up to ten diagnose/fix/recheck loops.",
+        "Each slide carries previous diagnoses and executed fixes into the next review so ready slides can keep polishing without waiting on slower slides.",
+        "The final cleanup removes all QA status tags, rails, diagnosis labels, and temporary feedback tags.",
         "Manual feedback reruns the same VLM QA/polish path against the existing Figma section."
       ],
       target: "figma-design-frames"
@@ -491,7 +491,7 @@ export function App() {
     setFigmaBuildPlan(qaPlan);
     setFigmaStages(qaPlan.stages);
     runFigmaStageAnimation("qa");
-    const activityTrace = runFigmaActivityTrace("qa", 10_500, feedback);
+    void runFigmaActivityTrace("qa", 30_000, feedback);
     try {
       const qaResponse = await fetch("/api/figma/qa", {
         method: "POST",
@@ -508,6 +508,9 @@ export function App() {
           bridgeCommandCount?: number;
           sectionId?: string;
           feedbackApplied?: boolean;
+          agenticLoopMode?: string;
+          passedSlideCount?: number;
+          maxDiagnoseFixLoops?: number;
           qaEvidence?: { screenshotCount?: number; exportCount?: number; finalScreenshotReady?: boolean };
           layoutWarnings?: string[];
         };
@@ -517,7 +520,9 @@ export function App() {
         setFigmaResult(
           `VLM QA/polish complete through ${result.bridgeCommandCount || result.batchCount || 10} bridge batches and ${
             result.actionCount || 100
-          } slide actions at ${result.actionsPerSecond || "?"}/sec. Ten all-slide screenshot diagnose/fix loops plus final tag removal are complete. Screenshots: ${
+          } slide actions at ${result.actionsPerSecond || "?"}/sec. Independent pass/fail slide loops passed ${
+            result.passedSlideCount || 10
+          } slides with up to ${result.maxDiagnoseFixLoops || 10} visual diagnose/fix/recheck attempts, then final tag removal ran. Screenshots: ${
             result.qaEvidence?.screenshotCount || 10
           }; exports verified: ${result.qaEvidence?.exportCount || 10}; final screenshot-ready confirmation: ${
             result.qaEvidence?.finalScreenshotReady === false ? "pending" : "yes"
@@ -533,7 +538,6 @@ export function App() {
       setFigmaResult(`Figma QA loop failed. Detail: ${error instanceof Error ? error.message : String(error)}`);
       setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: stage.status === "done" ? "done" : "queued" })));
     } finally {
-      await activityTrace;
       setFigmaBusy(false);
     }
   }
@@ -983,7 +987,7 @@ export function App() {
                 <p className="eyebrow">Step 5B</p>
                 <h2>Run Gemma VLM QA until the deck is ready to present.</h2>
                 <p className="stageIntro">
-                  The QA swarm takes each slide screenshot as VLM input, returns structured diagnosis and fix instructions, executes bridge fixes, then rechecks with fix history for up to five loops per slide.
+                  The QA swarm takes each slide screenshot as VLM input, returns structured pass/fail diagnosis and fix instructions, executes bridge fixes, then rechecks with full diagnosis and execution history for up to ten loops per slide.
                 </p>
               </div>
               <button className="secondaryButton compact" onClick={() => runFigmaQaLoop()} disabled={!deck || figmaBusy}>

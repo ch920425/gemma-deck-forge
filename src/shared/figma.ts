@@ -8,14 +8,17 @@ export const FIGMA_GENERATION_BATCH_COUNT = 16;
 export const FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT = 10;
 export const FIGMA_QA_BATCH_COUNT = FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT;
 
+type FigmaQaMode = "export" | "fix" | "finalize";
+
 export const FIGMA_QA_VLM_SYSTEM_PROMPT = [
   "You are Gemma 4 VLM Slide QA, a visual presentation design reviewer and Figma repair planner.",
-  "Input for each slide: current slide screenshot image, slide spec, deck narrative context, prior fix history, and current loop index.",
+  "Input for each slide: current slide screenshot image, slide spec, deck narrative context, prior diagnosis history, prior fix history, prior bridge execution results, and current loop index.",
   "Study the screenshot closely for broken layout, ugly visual hierarchy, overlapping components, cropped assets, unsafe margins, weak contrast, poor font size, unclear copy, inconsistent deck rhythm, and unsupported or repetitive claims.",
-  "Return only structured JSON with this schema: { slideId, loopIndex, status, screenshotObservations, issues, figmaFixes, copyFixes, cohesionNotes, noMoreIssues }.",
+  "Return only structured JSON with this schema: { slideId, loopIndex, passFail, status, confidence, screenshotObservations, issues, figmaFixes, copyFixes, cohesionNotes, noMoreIssues }.",
+  "The passFail field must be exactly \"pass\" or \"fail\". Use \"pass\" only when no visible overlap, clipping, unsafe margin, text overflow, broken asset placement, copy issue, or cohesion issue remains.",
   "Each issue must include severity, evidenceFromImage, whyItLooksBroken, and exactRepairIntent.",
   "Each figmaFix must be executable by a Figma bridge agent: targetNodeName, operation, x, y, width, height, color, text, fontSize, zOrder, and reason.",
-  "Run at most 10 diagnose -> fix -> recheck loops per slide. Stop early only when confidence is high, but keep a final screenshot-ready confirmation pass."
+  "Use the prior diagnosis and execution history to avoid duplicate repairs. Run at most 10 diagnose -> fix -> recheck loops per slide and stop early only when passFail is \"pass\" with high confidence."
 ].join("\\n");
 
 export function buildFigmaSpec(deck: Omit<DeckSpec, "figmaSpec">): FigmaDeckSpec {
@@ -89,8 +92,9 @@ export function buildFigmaQaPlan(
       "Run Gemma 4 VLM-style visual review over every generated slide.",
       "Check component placement, overlap, font sizing, copy clarity, background contrast, cohesion, and narrative flow.",
       "Use per-slide screenshot input, structured JSON diagnosis, and bridge-executable fix instructions.",
-      "Run up to ten diagnose/fix/recheck loops per slide, then final screenshot-ready confirmation.",
-      "Apply real Figma bridge batches every 1s for at least 10s.",
+      "Let each slide run an independent pass/fail diagnose/fix/recheck loop so ready slides execute fixes without waiting for slower slide reviewers.",
+      "Carry prior diagnoses and bridge execution results into each later slide review to avoid duplicate work.",
+      "Run bounded loops until every slide returns pass, then remove QA overlays and export final screenshot evidence.",
       "If manual feedback is provided, apply it as a visible deck-level QA constraint before final screenshot readiness."
     ],
     target: "figma-design-frames"
@@ -111,7 +115,13 @@ export function buildFigmaQaBatchScripts(deck: DeckSpec, options: { sectionId?: 
 
 export function buildFigmaQaBatchScript(
   deck: DeckSpec,
-  options: { sectionId?: string; feedback?: string; visionDiagnoses?: unknown[] } = {},
+  options: {
+    sectionId?: string;
+    feedback?: string;
+    visionDiagnoses?: unknown[];
+    qaMode?: FigmaQaMode;
+    targetSlideIds?: string[];
+  } = {},
   batchIndex = 0,
   totalBatches = FIGMA_QA_BATCH_COUNT
 ): string {
@@ -467,7 +477,13 @@ return {
 
 function buildExecutableFigmaQaBatchScript(
   deck: DeckSpec,
-  options: { sectionId?: string; feedback?: string; visionDiagnoses?: unknown[] },
+  options: {
+    sectionId?: string;
+    feedback?: string;
+    visionDiagnoses?: unknown[];
+    qaMode?: FigmaQaMode;
+    targetSlideIds?: string[];
+  },
   batchIndex: number,
   totalBatches: number
 ): string {
@@ -477,6 +493,8 @@ function buildExecutableFigmaQaBatchScript(
     title: cleanText(deck.title),
     slides: ensureTenSlides(deck),
     visionDiagnoses: options.visionDiagnoses || [],
+    qaMode: options.qaMode || "fix",
+    targetSlideIds: options.targetSlideIds || [],
     slideCount: Math.max(1, Math.min(10, deck.slides.length || 10)),
     qaSystemPrompt: FIGMA_QA_VLM_SYSTEM_PROMPT,
     maxDiagnoseFixLoops: FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT,
@@ -583,6 +601,23 @@ function bytesToBase64(bytes) {
   }
   return btoa(binary);
 }
+async function exportScreenshots(frames, finalReady, allFrames) {
+  const evidence = [];
+  for (let index = 0; index < frames.length; index += 1) {
+    const slideNumber = Array.isArray(allFrames) ? allFrames.indexOf(frames[index]) + 1 : index + 1;
+    const bytes = await frames[index].exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: 220 } });
+    evidence.push({
+      slideId: "s" + Math.max(1, slideNumber),
+      frameId: frames[index].id,
+      exportFormat: "PNG",
+      bytes: bytes.length,
+      dataUrl: "data:image/png;base64," + bytesToBase64(bytes),
+      qaTagsRemoved: !frames[index].findOne(node => String(node.name || "").startsWith("Gemma VLM") || String(node.name || "").startsWith("VLM structured") || String(node.name || "").startsWith("Manual feedback")),
+      finalScreenshotReady: Boolean(finalReady)
+    });
+  }
+  return evidence;
+}
 function clearFrame(frame) {
   children(frame).slice().forEach(node => node.remove());
 }
@@ -608,6 +643,106 @@ function bulletText(slide, index, fallback) {
 }
 function evidenceText(slide, index, fallback) {
   return (slide.evidence && slide.evidence[index % slide.evidence.length]) || fallback;
+}
+function safeNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+function slideDiagnoses(index) {
+  const id = "s" + (index + 1);
+  return Array.isArray(input.visionDiagnoses)
+    ? input.visionDiagnoses.filter(diagnosis => {
+        const slideId = String((diagnosis && diagnosis.slideId) || "");
+        const slideNumber = Number((diagnosis && diagnosis.slideNumber) || 0);
+        return slideId === id || slideNumber === index + 1;
+      })
+    : [];
+}
+function allFixesForSlide(index) {
+  return slideDiagnoses(index).flatMap(diagnosis => {
+    const direct = Array.isArray(diagnosis.figmaFixes) ? diagnosis.figmaFixes : [];
+    const fallback = Array.isArray(diagnosis.fixes) ? diagnosis.fixes : [];
+    return direct.concat(fallback);
+  });
+}
+function targetNode(frame, fix) {
+  const rawName = String(fix.targetNodeName || fix.target || fix.nodeName || "").toLowerCase();
+  if (!rawName) return null;
+  return frame.findOne(node => String(node.name || "").toLowerCase() === rawName)
+    || frame.findOne(node => String(node.name || "").toLowerCase().includes(rawName));
+}
+function applyOneFix(frame, fix) {
+  if (!fix || typeof fix !== "object") return 0;
+  const operation = String(fix.operation || fix.op || "adjust").toLowerCase();
+  let node = targetNode(frame, fix);
+  if (operation.includes("remove") && node) {
+    node.remove();
+    return 1;
+  }
+  if (!node && (fix.text || operation.includes("text"))) {
+    node = figma.createText();
+    node.name = String(fix.targetNodeName || "Gemma fix text");
+    frame.appendChild(node);
+    node.fontName = fix.bold ? fonts[1] : fonts[0];
+  }
+  if (!node || !("x" in node) || !("y" in node) || !("width" in node) || !("height" in node)) return 0;
+  node.x = clamp(safeNumber(fix.x, node.x), 24, 900);
+  node.y = clamp(safeNumber(fix.y, node.y), 24, 500);
+  if (fix.width || fix.height) {
+    const width = clamp(safeNumber(fix.width, node.width), 40, 900 - node.x);
+    const height = clamp(safeNumber(fix.height, node.height), 8, 500 - node.y);
+    node.resize(width, height);
+  } else if (node.x + node.width > 920) {
+    node.resize(Math.max(60, 920 - node.x), node.height);
+  }
+  if (node.type === "TEXT") {
+    node.fontName = fix.bold ? fonts[1] : fonts[0];
+    if (fix.text) node.characters = fitLines(String(fix.text), node.width, safeNumber(fix.fontSize, node.fontSize || 16), 3);
+    node.fontSize = clamp(safeNumber(fix.fontSize, node.fontSize || 16), 9, 42);
+    node.textAutoResize = "HEIGHT";
+    if (node.y + node.height > 510) node.y = Math.max(24, 510 - node.height);
+  }
+  if (fix.color && "fills" in node) node.fills = [paint(String(fix.color))];
+  if (String(fix.zOrder || "").toLowerCase() === "front" && node.parent) node.parent.appendChild(node);
+  return 1;
+}
+function applyVisionFixes(frame, index) {
+  return allFixesForSlide(index).reduce((count, fix) => count + applyOneFix(frame, fix), 0);
+}
+function clampExistingNodes(frame) {
+  let changed = 0;
+  children(frame).forEach(node => {
+    if (!("x" in node) || !("y" in node) || !("width" in node) || !("height" in node)) return;
+    if (String(node.name || "").startsWith("wire ")) node.opacity = input.batchIndex >= 4 ? 0 : 0.08;
+    if (node.type === "TEXT") {
+      if (node.fontSize > 46) {
+        node.fontSize = 46;
+        changed += 1;
+      }
+      if (node.name === "headline" && node.fontSize > 42) node.fontSize = 42;
+      if (node.name === "body" && node.fontSize > 17) node.fontSize = 17;
+      if (node.x + node.width > 910) {
+        node.resize(Math.max(120, 910 - node.x), 10);
+        changed += 1;
+      }
+      if (node.y + node.height > 500) {
+        node.y = Math.max(28, 500 - node.height);
+        changed += 1;
+      }
+    }
+    if (node.x < 20) {
+      node.x = 20;
+      changed += 1;
+    }
+    if (node.y < 20) {
+      node.y = 20;
+      changed += 1;
+    }
+  });
+  return changed;
 }
 function cleanFinalLayout(frame, slide, index) {
   clearFrame(frame);
@@ -714,6 +849,34 @@ function cleanFinalLayout(frame, slide, index) {
 }
 const frames = section.findAll(node => node.type === "FRAME").slice(0, input.slideCount);
 if (!frames.length) throw new Error("Generated section has no slide frames to QA.");
+const targetSlideIds = Array.isArray(input.targetSlideIds) ? input.targetSlideIds.map(String) : [];
+if (input.qaMode === "export") {
+  const framesToExport = targetSlideIds.length
+    ? frames.filter((_, index) => targetSlideIds.includes("s" + (index + 1)))
+    : frames;
+  const screenshotEvidence = await exportScreenshots(framesToExport, false, frames);
+  figma.viewport.scrollAndZoomIntoView([section]);
+  return {
+    ok: true,
+    mode: "qa-export",
+    batchIndex: input.batchIndex,
+    totalBatches: input.totalBatches,
+    sectionId: section.id,
+    sectionName: section.name,
+    slideCount: frames.length,
+    actionCount: 0,
+    screenshotEvidence,
+    qaEvidence: {
+      sectionId: section.id,
+      screenshotCount: screenshotEvidence.length,
+      exportCount: screenshotEvidence.length,
+      finalScreenshotReady: false,
+      screenshots: screenshotEvidence
+    },
+    feedbackApplied: Boolean(input.feedback),
+    layoutWarnings: ["qa screenshots exported for Gemma review"]
+  };
+}
 const colors = ["#0E7C66", "#1146D4", "#D95D39", "#FFA629"];
 const notes = [
   "Loop 1/10: screenshot diagnosis of bounds, overlap, and crop",
@@ -731,27 +894,18 @@ const accent = colors[input.batchIndex % colors.length];
 const loopIndex = Math.min(input.batchIndex + 1, input.maxDiagnoseFixLoops);
 let actionCount = 0;
 frames.forEach((frame, index) => {
+  const slideId = "s" + (index + 1);
+  if (input.qaMode === "fix" && targetSlideIds.length && !targetSlideIds.includes(slideId)) return;
   const slide = input.slides[index] || input.slides[input.slides.length - 1] || {};
-  if (input.batchIndex >= input.totalBatches - 2) {
+  if (input.qaMode === "finalize" || input.batchIndex >= input.totalBatches - 2) {
     cleanFinalLayout(frame, slide, index);
     actionCount += 1;
     return;
   }
   frame.strokes = [paint(accent)];
   frame.strokeWeight = 3;
-  children(frame).forEach(node => {
-    if (!("x" in node) || !("y" in node) || !("width" in node) || !("height" in node)) return;
-    if (String(node.name || "").startsWith("wire ")) node.opacity = input.batchIndex >= 4 ? 0 : 0.08;
-    if (node.type === "TEXT") {
-      if (node.fontSize > 46) node.fontSize = 46;
-      if (node.name === "headline" && node.fontSize > 42) node.fontSize = 42;
-      if (node.name === "body" && node.fontSize > 17) node.fontSize = 17;
-      if (node.x + node.width > 910) node.resize(Math.max(120, 910 - node.x), 10);
-      if (node.y + node.height > 500) node.y = Math.max(28, 500 - node.height);
-    }
-    if (node.x < 20) node.x = 20;
-    if (node.y < 20) node.y = 20;
-  });
+  actionCount += clampExistingNodes(frame);
+  actionCount += applyVisionFixes(frame, index);
   const note = notes[input.batchIndex % notes.length];
   rect(frame, "Gemma VLM QA rail", 0, 0, 12, 540, accent, 0);
   rect(frame, "Gemma VLM safe area", 28, 28, 904, 484, input.batchIndex >= input.totalBatches - 2 ? "#FFFFFF" : "#F7FAFF", 8).opacity = input.batchIndex >= input.totalBatches - 2 ? 0.05 : 0.08;
@@ -767,19 +921,8 @@ frames.forEach((frame, index) => {
   actionCount += 1;
 });
 const screenshotEvidence = [];
-if (input.batchIndex === 0 || input.batchIndex >= input.totalBatches - 1) {
-  for (let index = 0; index < frames.length; index += 1) {
-    const bytes = await frames[index].exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: 220 } });
-    screenshotEvidence.push({
-      slideId: "s" + (index + 1),
-      frameId: frames[index].id,
-      exportFormat: "PNG",
-      bytes: bytes.length,
-      dataUrl: "data:image/png;base64," + bytesToBase64(bytes),
-      qaTagsRemoved: !frames[index].findOne(node => String(node.name || "").startsWith("Gemma VLM") || String(node.name || "").startsWith("VLM structured") || String(node.name || "").startsWith("Manual feedback")),
-      finalScreenshotReady: input.batchIndex >= input.totalBatches - 1
-    });
-  }
+if (input.qaMode === "finalize" || input.batchIndex >= input.totalBatches - 1) {
+  screenshotEvidence.push(...(await exportScreenshots(frames, true, frames)));
 }
 figma.viewport.scrollAndZoomIntoView([section]);
 const elapsedSec = (Date.now() - startedAt) / 1000;

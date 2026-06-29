@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { gemmaDeckApiPlugin } from "../src/server/apiPlugin";
 import { normalizeDeck } from "../src/server/deck";
 import { getFigmaBridgeServer, resetFigmaBridgeServerForTests, type FigmaBridgeServer } from "../src/server/figmaBridge";
-import { FIGMA_GENERATION_BATCH_COUNT, FIGMA_QA_BATCH_COUNT } from "../src/shared/figma";
+import { FIGMA_GENERATION_BATCH_COUNT } from "../src/shared/figma";
 import type { DeckSpec } from "../src/shared/schema";
 
 interface BridgeCommand {
@@ -62,7 +62,7 @@ describe("Figma API route bridge batching", () => {
     expect(new Set(commands.map((command) => String(command.params?.code || ""))).size).toBeGreaterThan(1);
   }, 35_000);
 
-  it("runs QA through repeated short EXECUTE_CODE batches", async () => {
+  it("runs QA through independent per-slide visual pass/fail loops", async () => {
     const harness = await connectBridgeHarness("QA Route Harness");
     const { body, commands, status } = await postFigmaRouteWithBatchResponses(
       "/api/figma/qa",
@@ -74,14 +74,39 @@ describe("Figma API route bridge batching", () => {
     expect(body).toMatchObject({ ok: true });
     const result = ((body.result as { result?: Record<string, unknown> }).result || {}) as Record<string, unknown>;
     const qaEvidence = result.qaEvidence as { screenshotCount?: number; exportCount?: number; finalScreenshotReady?: boolean; screenshots?: unknown[] };
-    expect(commands).toHaveLength(FIGMA_QA_BATCH_COUNT);
+    const commandCodes = commands.map((command) => String(command.params?.code || ""));
+    const fixCommands = commandCodes.filter((code) => code.includes('"qaMode":"fix"'));
+    const exportCommands = commandCodes.filter((code) => code.includes('"qaMode":"export"'));
+    const finalizeCommands = commandCodes.filter((code) => code.includes('"qaMode":"finalize"'));
+
+    expect(commands.length).toBeGreaterThanOrEqual(22);
     expect(commands.every((command) => command.method === "EXECUTE_CODE")).toBe(true);
-    expect(commands.every((command) => Number(command.params?.timeout) <= 8_000)).toBe(true);
+    expect(commands.every((command) => Number(command.params?.timeout) <= 15_000)).toBe(true);
     expect(commands.every((command) => String(command.params?.code || "").includes('"sectionId":"section-1"'))).toBe(true);
     expect(commands.every((command) => !String(command.params?.code || "").includes("figma.createSection"))).toBe(true);
-    expect(result.batchIntervalMs).toBe(1000);
-    expect(result.bridgeCommandCount).toBe(FIGMA_QA_BATCH_COUNT);
+    expect(commandCodes[0]).toContain('"qaMode":"export"');
+    expect(fixCommands).toHaveLength(10);
+    expect(exportCommands.length).toBeGreaterThanOrEqual(11);
+    expect(finalizeCommands).toHaveLength(1);
+    expect(fixCommands.every((code) => code.includes('"targetSlideIds":["s'))).toBe(true);
+    for (let slideIndex = 1; slideIndex <= 10; slideIndex += 1) {
+      const slideId = `s${slideIndex}`;
+      const firstFixIndex = commandCodes.findIndex((code) => code.includes('"qaMode":"fix"') && code.includes(`"targetSlideIds":["${slideId}"]`));
+      const freshExportAfterFixIndex = commandCodes.findIndex(
+        (code, commandIndex) =>
+          commandIndex > firstFixIndex &&
+          code.includes('"qaMode":"export"') &&
+          code.includes(`"targetSlideIds":["${slideId}"]`)
+      );
+      expect(firstFixIndex).toBeGreaterThan(0);
+      expect(freshExportAfterFixIndex).toBeGreaterThan(firstFixIndex);
+    }
+    expect(result.agenticLoopMode).toBe("per-slide-independent");
+    expect(result.batchIntervalMs).toBeNull();
+    expect(result.bridgeCommandCount).toBe(commands.length);
     expect(result.maxDiagnoseFixLoops).toBe(10);
+    expect(result.passedSlideCount).toBe(10);
+    expect(result.slideQaStates).toHaveLength(10);
     expect(qaEvidence.screenshotCount).toBe(10);
     expect(qaEvidence.exportCount).toBe(10);
     expect(qaEvidence.finalScreenshotReady).toBe(true);
@@ -182,22 +207,35 @@ async function postFigmaRouteWithBatchResponses(
   });
 
   const commands: BridgeCommand[] = [];
-  for (let index = 0; index < 20 && !responseSettled; index += 1) {
+  for (let index = 0; index < 80 && !responseSettled; index += 1) {
     const command = await Promise.race([
       nextExecuteCommand(harness.messages, commands.at(-1)?.id),
       responsePromise.then(() => null)
     ]);
     if (!command) break;
     commands.push(command);
-    const totalBatches = path === "/api/figma/build" ? FIGMA_GENERATION_BATCH_COUNT : FIGMA_QA_BATCH_COUNT;
+    const code = String(command.params?.code || "");
+    const qaMode = code.includes('"qaMode":"finalize"')
+      ? "finalize"
+      : code.includes('"qaMode":"fix"')
+        ? "fix"
+        : code.includes('"qaMode":"export"')
+          ? "export"
+          : "";
+    const targetSlideIds = qaMode ? extractTargetSlideIds(code) : [];
+    const totalBatches = path === "/api/figma/build" ? FIGMA_GENERATION_BATCH_COUNT : 10;
     const isFinal = index >= totalBatches - 1;
+    const qaScreenshots =
+      path === "/api/figma/qa" && (qaMode === "export" || qaMode === "finalize")
+        ? screenshotEvidenceFor(targetSlideIds.length ? targetSlideIds : Array.from({ length: 10 }, (_, slideIndex) => `s${slideIndex + 1}`), qaMode === "finalize")
+        : [];
     harness.client.send(
       JSON.stringify({
         id: command.id,
         result: {
           success: true,
           result: {
-            mode: path === "/api/figma/build" ? "generation" : "qa",
+            mode: path === "/api/figma/build" ? "generation" : qaMode === "export" ? "qa-export" : "qa",
             batchIndex: index,
             totalBatches,
             batchCount: index + 1,
@@ -210,34 +248,15 @@ async function postFigmaRouteWithBatchResponses(
               path === "/api/figma/build"
                 ? { implementedPercent: isFinal ? 99 : 70, passed: isFinal }
                 : undefined,
-            screenshotEvidence:
-              path === "/api/figma/qa" && (index === 0 || isFinal)
-                ? Array.from({ length: 10 }, (_, slideIndex) => ({
-                    slideId: `s${slideIndex + 1}`,
-                    frameId: `frame-${slideIndex + 1}`,
-                    exportFormat: "PNG",
-                    bytes: 1200 + slideIndex,
-                    dataUrl: "data:image/png;base64,ZmFrZQ==",
-                    qaTagsRemoved: isFinal,
-                    finalScreenshotReady: isFinal
-                  }))
-                : [],
+            screenshotEvidence: qaScreenshots,
             qaEvidence:
-              path === "/api/figma/qa" && (index === 0 || isFinal)
+              path === "/api/figma/qa" && qaScreenshots.length
                 ? {
                     sectionId: String((payload as { sectionId?: string }).sectionId || "section-1"),
-                    screenshotCount: 10,
-                    exportCount: 10,
-                    finalScreenshotReady: isFinal,
-                    screenshots: Array.from({ length: 10 }, (_, slideIndex) => ({
-                      slideId: `s${slideIndex + 1}`,
-                      frameId: `frame-${slideIndex + 1}`,
-                      exportFormat: "PNG",
-                      bytes: 1200 + slideIndex,
-                      dataUrl: "data:image/png;base64,ZmFrZQ==",
-                      qaTagsRemoved: isFinal,
-                      finalScreenshotReady: isFinal
-                    }))
+                    screenshotCount: qaScreenshots.length,
+                    exportCount: qaScreenshots.length,
+                    finalScreenshotReady: qaMode === "finalize",
+                    screenshots: qaScreenshots
                   }
                 : undefined,
             feedbackApplied: path === "/api/figma/qa",
@@ -250,6 +269,24 @@ async function postFigmaRouteWithBatchResponses(
 
   const response = await withTimeout(responsePromise, 2_000, `${path} did not finish after acknowledged batches`);
   return { ...response, commands };
+}
+
+function extractTargetSlideIds(code: string): string[] {
+  const match = code.match(/"targetSlideIds":\[(.*?)\]/);
+  if (!match) return [];
+  return [...match[1].matchAll(/"([^"]+)"/g)].map((item) => item[1]);
+}
+
+function screenshotEvidenceFor(slideIds: string[], finalReady: boolean) {
+  return slideIds.map((slideId, index) => ({
+    slideId,
+    frameId: `frame-${slideId.replace(/\D/g, "") || index + 1}`,
+    exportFormat: "PNG",
+    bytes: 1200 + index,
+    dataUrl: "data:image/png;base64,ZmFrZQ==",
+    qaTagsRemoved: finalReady,
+    finalScreenshotReady: finalReady
+  }));
 }
 
 async function nextExecuteCommand(messages: BridgeCommand[], afterId?: string): Promise<BridgeCommand> {
