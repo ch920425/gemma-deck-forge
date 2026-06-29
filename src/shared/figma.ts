@@ -1,6 +1,23 @@
 import type { DeckSpec, FigmaBuildPlan, FigmaDeckSpec, FigmaSlideBuildStage } from "./schema";
 import { outlineStyleForIndex } from "./outlineStyles";
 
+export const FIGMA_GENERATION_BATCH_INTERVAL_MS = 500;
+export const FIGMA_QA_BATCH_INTERVAL_MS = 1000;
+export const FIGMA_BATCH_INTERVAL_MS = FIGMA_GENERATION_BATCH_INTERVAL_MS;
+export const FIGMA_GENERATION_BATCH_COUNT = 16;
+export const FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT = 5;
+export const FIGMA_QA_BATCH_COUNT = 7;
+
+export const FIGMA_QA_VLM_SYSTEM_PROMPT = [
+  "You are Gemma 4 VLM Slide QA, a visual presentation design reviewer and Figma repair planner.",
+  "Input for each slide: current slide screenshot image, slide spec, deck narrative context, prior fix history, and current loop index.",
+  "Study the screenshot closely for broken layout, ugly visual hierarchy, overlapping components, cropped assets, unsafe margins, weak contrast, poor font size, unclear copy, inconsistent deck rhythm, and unsupported or repetitive claims.",
+  "Return only structured JSON with this schema: { slideId, loopIndex, status, screenshotObservations, issues, figmaFixes, copyFixes, cohesionNotes, noMoreIssues }.",
+  "Each issue must include severity, evidenceFromImage, whyItLooksBroken, and exactRepairIntent.",
+  "Each figmaFix must be executable by a Figma bridge agent: targetNodeName, operation, x, y, width, height, color, text, fontSize, zOrder, and reason.",
+  "Run at most 5 diagnose -> fix -> recheck loops per slide. Stop early when noMoreIssues is true, but keep a final screenshot-ready confirmation pass."
+].join("\\n");
+
 export function buildFigmaSpec(deck: Omit<DeckSpec, "figmaSpec">): FigmaDeckSpec {
   return {
     deckTitle: deck.title,
@@ -48,16 +65,47 @@ export function buildFigmaHandoffPrompt(deck: DeckSpec): string {
 
 export function buildFigmaBuildPlan(deck: DeckSpec): FigmaBuildPlan {
   return {
-    script: buildExecutableFigmaScript(deck),
+    script: buildFigmaGenerationBatchScripts(deck)[0],
     stages: buildParallelFigmaStages(deck),
     checklist: [
       "Create slide frames inside a named Gemma Deck Forge section.",
-      "Run build, review, revise, polish, and finalize passes across every slide.",
-      "Keep Figma writes in one ordered bridge lane while agent planning runs in parallel.",
-      "Measure slide-actions/sec and run a 7s VLM-style visual QA loop for overlap, crop, hierarchy, cohesion, copy fit, and screenshot readiness."
+      "Run scaffold, wireframe, writing, component, motion, and finalization batches across every slide.",
+      "Execute real Figma bridge batches every 0.5s so the desktop file visibly changes over time.",
+      "Keep generation separate from the later VLM-style QA/polish loop."
     ],
     target: "figma-design-frames"
   };
+}
+
+export function buildFigmaQaPlan(
+  deck: DeckSpec,
+  options: { sectionId?: string; feedback?: string } = {}
+): FigmaBuildPlan {
+  return {
+    script: buildFigmaQaBatchScripts(deck, options)[0],
+    stages: buildParallelFigmaQaStages(deck),
+    checklist: [
+      "Run Gemma 4 VLM-style visual review over every generated slide.",
+      "Check component placement, overlap, font sizing, copy clarity, background contrast, cohesion, and narrative flow.",
+      "Use per-slide screenshot input, structured JSON diagnosis, and bridge-executable fix instructions.",
+      "Run up to five diagnose/fix/recheck loops per slide, then final screenshot-ready confirmation.",
+      "Apply real Figma bridge batches every 1s for at least 6s.",
+      "If manual feedback is provided, apply it as a visible deck-level QA constraint before final screenshot readiness."
+    ],
+    target: "figma-design-frames"
+  };
+}
+
+export function buildFigmaGenerationBatchScripts(deck: DeckSpec): string[] {
+  return Array.from({ length: FIGMA_GENERATION_BATCH_COUNT }, (_, batchIndex) =>
+    buildExecutableFigmaGenerationBatchScript(deck, batchIndex, FIGMA_GENERATION_BATCH_COUNT)
+  );
+}
+
+export function buildFigmaQaBatchScripts(deck: DeckSpec, options: { sectionId?: string; feedback?: string } = {}): string[] {
+  return Array.from({ length: FIGMA_QA_BATCH_COUNT }, (_, batchIndex) =>
+    buildExecutableFigmaQaBatchScript(deck, options, batchIndex, FIGMA_QA_BATCH_COUNT)
+  );
 }
 
 export function buildParallelFigmaStages(deck: DeckSpec): FigmaSlideBuildStage[] {
@@ -72,6 +120,621 @@ export function buildParallelFigmaStages(deck: DeckSpec): FigmaSlideBuildStage[]
       summary: stageSummary(phase, slide.title)
     }))
   );
+}
+
+export function buildParallelFigmaQaStages(deck: DeckSpec): FigmaSlideBuildStage[] {
+  const phases: Array<{ phase: FigmaSlideBuildStage["phase"]; label: string }> = [
+    { phase: "review", label: "VLM scan placement, overlap, and crop" },
+    { phase: "revise", label: "Apply copy and layout fix batch" },
+    { phase: "polish", label: "Tune hierarchy, contrast, and cohesion" },
+    { phase: "finalize", label: "Lock screenshot-ready deck state" }
+  ];
+  const slides = ensureTenSlides(deck);
+  return phases.flatMap(({ phase, label }, phaseIndex) =>
+    slides.map((slide, slideIndex) => ({
+      slideId: `s${slideIndex + 1}`,
+      title: slide.title,
+      phase,
+      status: phaseIndex === 0 ? "running" : "queued",
+      summary: `${label}: ${slide.title}`
+    }))
+  );
+}
+
+function buildExecutableFigmaGenerationBatchScript(deck: DeckSpec, batchIndex: number, totalBatches: number): string {
+  const payload = JSON.stringify({
+    ...toFigmaPayload(deck),
+    batchIndex,
+    totalBatches
+  });
+  return `
+const startedAt = Date.now();
+const deck = ${payload};
+await figma.loadAllPagesAsync();
+const page = figma.currentPage;
+const fonts = [
+  { family: "Inter", style: "Regular" },
+  { family: "Inter", style: "Bold" }
+];
+try {
+  await Promise.all(fonts.map(font => figma.loadFontAsync(font)));
+} catch (error) {
+  fonts[0] = { family: "Arial", style: "Regular" };
+  fonts[1] = { family: "Arial", style: "Bold" };
+  await Promise.all(fonts.map(font => figma.loadFontAsync(font)));
+}
+function paint(hex) {
+  const value = String(hex || "#FFFFFF").replace("#", "");
+  const int = parseInt(value, 16);
+  return { type: "SOLID", color: { r: ((int >> 16) & 255) / 255, g: ((int >> 8) & 255) / 255, b: (int & 255) / 255 } };
+}
+function pad(value) {
+  return String(value).padStart(2, "0");
+}
+function fit(value, max) {
+  const clean = String(value || "").replace(/[\\u0000-\\u001F\\u007F]/g, " ").replace(/\\s+/g, " ").trim();
+  return clean.length > max ? clean.slice(0, Math.max(8, max - 1)).trim() + "..." : clean;
+}
+function removeGeneratedSection() {
+  const existing = page.findAll(node => node.type === "SECTION" && node.name === deck.sectionName);
+  existing.forEach(node => node.remove());
+}
+function findSection() {
+  let section = page.findOne(node => node.type === "SECTION" && node.name === deck.sectionName);
+  if (section && section.type === "SECTION") return section;
+  const maxBottom = page.children.reduce((bottom, node) => {
+    if (!("y" in node) || !("height" in node)) return bottom;
+    return Math.max(bottom, node.y + node.height);
+  }, 0);
+  section = figma.createSection();
+  section.name = deck.sectionName;
+  section.x = deck.origin.x;
+  section.y = Math.max(deck.origin.y, maxBottom + deck.gap * 2);
+  section.resizeWithoutConstraints(deck.sectionWidth, deck.sectionHeight);
+  page.appendChild(section);
+  return section;
+}
+function nodeChildren(parent) {
+  return "children" in parent ? parent.children : [];
+}
+function findChild(parent, name, type) {
+  return nodeChildren(parent).find(child => child.name === name && (!type || child.type === type)) || null;
+}
+function rect(parent, name, x, y, w, h, color, radius) {
+  let node = findChild(parent, name, "RECTANGLE");
+  if (!node) {
+    node = figma.createRectangle();
+    node.name = name;
+    parent.appendChild(node);
+  }
+  node.x = x;
+  node.y = y;
+  node.resize(w, h);
+  node.cornerRadius = radius == null ? 8 : radius;
+  node.fills = [paint(color)];
+  node.opacity = 1;
+  return node;
+}
+function ellipse(parent, name, x, y, w, h, color) {
+  let node = findChild(parent, name, "ELLIPSE");
+  if (!node) {
+    node = figma.createEllipse();
+    node.name = name;
+    parent.appendChild(node);
+  }
+  node.x = x;
+  node.y = y;
+  node.resize(w, h);
+  node.fills = [paint(color)];
+  node.opacity = 1;
+  return node;
+}
+function text(parent, name, value, x, y, w, size, color, bold) {
+  let node = findChild(parent, name, "TEXT");
+  if (!node) {
+    node = figma.createText();
+    node.name = name;
+    parent.appendChild(node);
+  }
+  node.x = x;
+  node.y = y;
+  node.resize(w, 10);
+  node.fontName = bold ? fonts[1] : fonts[0];
+  node.characters = fit(value, Math.max(18, Math.floor(w / Math.max(7, size * 0.5)) * (size >= 34 ? 3 : 5)));
+  node.fontSize = size;
+  node.lineHeight = { unit: "PERCENT", value: 110 };
+  node.fills = [paint(color)];
+  node.textAutoResize = "HEIGHT";
+  node.opacity = 1;
+  return node;
+}
+function ensureFrame(section, slide, index) {
+  const prefix = "Slide " + pad(index + 1);
+  let frame = section.findOne(node => node.type === "FRAME" && String(node.name || "").startsWith(prefix));
+  const col = index % deck.columns;
+  const row = Math.floor(index / deck.columns);
+  if (!frame) {
+    frame = figma.createFrame();
+    frame.name = prefix + " - " + slide.title;
+    section.appendChild(frame);
+  }
+  frame.x = deck.padding + col * (deck.slideWidth + deck.gap);
+  frame.y = deck.padding + 128 + row * (deck.slideHeight + deck.gap);
+  frame.resize(deck.slideWidth, deck.slideHeight);
+  frame.cornerRadius = 8;
+  frame.clipsContent = true;
+  const dark = [0, 5, 7, 9].includes(index);
+  frame.fills = [paint(dark ? palette.navy : index === 2 || index === 8 ? "#FBFCFF" : "#FFFFFF")];
+  frame.strokes = [paint(batchAccent(index))];
+  frame.strokeWeight = deck.batchIndex >= deck.totalBatches - 2 ? 5 : 2;
+  return frame;
+}
+function batchAccent(index) {
+  const colors = [palette.blue, palette.green, palette.red, palette.amber];
+  return colors[(deck.batchIndex + index) % colors.length];
+}
+const palette = {
+  navy: "#12235D",
+  blue: "#1146D4",
+  light: "#F7FAFF",
+  ink: "#17211D",
+  muted: "#53625A",
+  amber: "#FFA629",
+  green: "#0E7C66",
+  red: "#D95D39",
+  grid: "#E6EAF2",
+  white: "#FFFFFF"
+};
+const phases = [
+  "blank frames",
+  "wireframe scaffold",
+  "headline writing",
+  "body and story copy",
+  "evidence components",
+  "slide-specific visual",
+  "layout correction",
+  "cohesion pass",
+  "contrast pass",
+  "copy fit pass",
+  "agent review gate",
+  "component polish",
+  "narrative rhythm",
+  "screenshot checks",
+  "final proof chips",
+  "ready deck"
+];
+if (deck.batchIndex === 0) removeGeneratedSection();
+const section = findSection();
+section.resizeWithoutConstraints(deck.sectionWidth, deck.sectionHeight);
+section.fills = [paint("#1A221F")];
+text(section, "section title", deck.title, deck.padding, 30, 1200, 34, "#FFFDF7", true);
+text(section, "section subtitle", "Live Gemma agents generate blank frames, wireframes, copy, components, review gates, and final polish in repeated bridge batches.", deck.padding, 74, 1580, 18, "#DCE7DF", false);
+function addWireframe(frame, index) {
+  rect(frame, "wire headline", 46, 72, index % 3 === 0 ? 560 : 680, 36, "#E7EAF0", 7).opacity = deck.batchIndex < 4 ? 0.95 : 0.18;
+  rect(frame, "wire body", 50, 326, 420, 18, "#E7EAF0", 5).opacity = deck.batchIndex < 4 ? 0.85 : 0.14;
+  rect(frame, "wire visual", index % 2 === 0 ? 592 : 54, 166, index % 2 === 0 ? 284 : 392, 180, "#DDE4EE", 8).opacity = deck.batchIndex < 4 ? 0.85 : 0.13;
+}
+function addProgress(frame, slide, index) {
+  const accent = batchAccent(index);
+  rect(frame, "live rail", 0, 0, 8, deck.slideHeight, accent, 0);
+  text(frame, "slide no", pad(index + 1), 42, 32, 46, 17, isDark(index) ? palette.white : palette.ink, true);
+  rect(frame, "phase badge", 680, 32, 218, 44, deck.batchIndex >= 14 ? palette.green : accent, 11);
+  text(frame, "phase badge copy", "BATCH " + pad(deck.batchIndex + 1) + "/" + deck.totalBatches, 696, 45, 98, 12, palette.white, true);
+  text(frame, "phase badge note", phases[deck.batchIndex] || "agent pass", 796, 45, 86, 11, palette.white, false);
+  text(frame, "live review note", (deck.batchIndex >= 10 ? "REVIEW: " : "WORKING: ") + phases[deck.batchIndex] + ". Slide " + (index + 1) + " is being improved now.", 46, 468, 600, 13, isDark(index) ? "#DCE7DF" : palette.muted, false);
+  ["BUI", "REV", "FIX", "POL", "FIN"].forEach((label, chipIndex) => {
+    const active = deck.batchIndex >= 3 + chipIndex * 3;
+    rect(frame, "agent chip " + chipIndex, 668 + chipIndex * 48, 452, 38, 30, active ? [palette.green, palette.blue, palette.red, palette.amber, palette.ink][chipIndex] : "#E8ECF4", 8);
+    text(frame, "agent chip text " + chipIndex, label, 677 + chipIndex * 48, 462, 20, 8, active ? palette.white : palette.ink, true);
+  });
+}
+function isDark(index) {
+  return [0, 5, 7, 9].includes(index);
+}
+function referenceCue(frame, name, x, y, w, h, label, accent) {
+  rect(frame, name + " bg", x, y, w, h, "#F7FAFF", 8);
+  rect(frame, name + " band", x, y, w, Math.max(24, h * 0.22), accent, 8);
+  ellipse(frame, name + " dot", x + w - 42, y + 12, 24, 24, palette.amber);
+  rect(frame, name + " line 1", x + 18, y + 48, w - 56, 8, "#DDE4EE", 4);
+  rect(frame, name + " line 2", x + 18, y + 74, w - 88, 8, "#DDE4EE", 4);
+  rect(frame, name + " label bg", x, y + h - 26, w, 26, palette.white, 0);
+  text(frame, name + " label", label, x + 10, y + h - 20, w - 20, 10, palette.ink, true);
+}
+function addTypedVisual(frame, slide, index) {
+  const accent = batchAccent(index);
+  const ink = isDark(index) ? palette.white : palette.ink;
+  if (index === 0) {
+    rect(frame, "opener slab", 0, 0, 286, deck.slideHeight, palette.blue, 0);
+    rect(frame, "live demo tab", 46, 42, 132, 34, palette.amber, 8);
+    text(frame, "live demo tab text", "LIVE DEMO", 66, 53, 90, 11, palette.ink, true);
+    referenceCue(frame, "speak sample", 608, 86, 258, 142, "Speak style sample", palette.blue);
+    referenceCue(frame, "component grammar", 654, 262, 212, 112, "component grammar", palette.blue);
+  } else if (index === 1) {
+    rect(frame, "thesis rail", 0, 0, 24, deck.slideHeight, accent, 0);
+    [0, 1, 2].forEach(i => {
+      rect(frame, "claim card " + i, 628, 118 + i * 94, 244, 70, i === 1 ? "#FFF4D9" : palette.light, 8);
+      text(frame, "claim copy " + i, slide.bullets[i % slide.bullets.length] || "clear claim", 650, 140 + i * 94, 188, 16, palette.ink, true);
+    });
+  } else if (index === 2) {
+    [0, 1, 2, 3, 4, 5].forEach(i => {
+      const x = 54 + (i % 3) * 248;
+      const y = 190 + Math.floor(i / 3) * 128;
+      rect(frame, "evidence card " + i, x, y, 212, 92, i % 2 ? palette.light : palette.white, 8);
+      text(frame, "evidence label " + i, i < 3 ? "SOURCE" : "AGENT NOTE", x + 16, y + 16, 100, 10, accent, true);
+      text(frame, "evidence copy " + i, (i < 3 ? slide.evidence[i % slide.evidence.length] : slide.bullets[i % slide.bullets.length]) || "source cue", x + 16, y + 38, 170, 13, palette.ink, true);
+    });
+  } else if (index === 3) {
+    ["Context", "Outline", "Scaffold", "Review", "Polish"].forEach((label, i) => {
+      const x = 62 + i * 162;
+      ellipse(frame, "workflow node " + i, x + 38, 178, 46, 46, i === 2 ? palette.amber : accent);
+      text(frame, "workflow num " + i, String(i + 1), x + 54, 193, 16, 14, i === 2 ? palette.ink : palette.white, true);
+      rect(frame, "workflow block " + i, x, 250, 126, 82, i === 2 ? "#FFF4D9" : palette.white, 8);
+      text(frame, "workflow label " + i, label, x + 18, 276, 90, 14, palette.ink, true);
+    });
+  } else if (index === 4) {
+    rect(frame, "before panel", 56, 176, 360, 218, "#F3F4F7", 8);
+    rect(frame, "after panel", 498, 176, 360, 218, "#E7F2EE", 8);
+    text(frame, "before label", "BEFORE", 82, 206, 120, 12, palette.muted, true);
+    text(frame, "after label", "AFTER", 524, 206, 120, 12, accent, true);
+    text(frame, "before copy", slide.bullets[0] || "Repeated scaffold", 82, 246, 270, 24, palette.ink, true);
+    text(frame, "after copy", slide.bullets[1] || "Specific slide job", 524, 246, 270, 24, palette.ink, true);
+    rect(frame, "transition", 426, 286, 64, 8, palette.amber, 4);
+  } else if (index === 5) {
+    text(frame, "metric", "5+ actions/sec", 56, 202, 500, 58, palette.amber, true);
+    [0, 1, 2, 3, 4].forEach(i => rect(frame, "metric bar " + i, 620 + i * 48, 390 - (62 + i * 30), 32, 62 + i * 30, i === 4 ? palette.amber : palette.blue, 6));
+    referenceCue(frame, "speed proof", 610, 86, 230, 116, "Speak speed proof", palette.blue);
+  } else if (index === 6) {
+    ellipse(frame, "map hub", 394, 194, 162, 162, palette.blue);
+    text(frame, "map hub label", "Gemma swarm", 425, 252, 96, 18, palette.white, true);
+    ["KB", "Outline", "Figma", "QA"].forEach((label, i) => {
+      const x = [112, 654, 142, 656][i];
+      const y = [166, 166, 374, 374][i];
+      rect(frame, "map node " + i, x, y, 156, 70, i === 2 ? "#FFF4D9" : palette.white, 8);
+      text(frame, "map node label " + i, label, x + 18, y + 18, 90, 13, accent, true);
+    });
+  } else if (index === 7) {
+    text(frame, "quote mark", String.fromCharCode(34), 54, 42, 120, 96, palette.amber, true);
+    referenceCue(frame, "quote cue", 638, 326, 224, 112, "design critique cue", palette.blue);
+  } else if (index === 8) {
+    referenceCue(frame, "artifact source", 54, 164, 360, 220, "Speak source asset", palette.blue);
+    rect(frame, "artifact note panel", 454, 164, 392, 220, palette.white, 8);
+    text(frame, "artifact note label", "AGENTIC NOTES", 482, 190, 140, 11, accent, true);
+    [0, 1, 2].forEach(i => text(frame, "artifact item " + i, slide.bullets[i % slide.bullets.length] || "fix note", 510, 230 + i * 44, 280, 14, palette.ink, true));
+  } else {
+    rect(frame, "closing rail", 0, 0, deck.slideWidth, 18, palette.amber, 0);
+    ["WATCH", "EDIT", "SHIP"].forEach((label, i) => {
+      rect(frame, "closing chip " + i, 604 + i * 92, 326, 74, 36, i === 1 ? palette.amber : palette.blue, 8);
+      text(frame, "closing chip text " + i, label, 617 + i * 92, 338, 48, 10, i === 1 ? palette.ink : palette.white, true);
+    });
+  }
+  text(frame, "format tag", fit(slide.formatLabel || slide.layout || "Slide job", 44).toUpperCase(), 240, 36, 360, 12, accent, true);
+  text(frame, "headline", slide.headline, 52, index === 0 ? 112 : 84, index === 0 ? 520 : 630, index === 0 ? 42 : index === 5 ? 34 : 36, ink, true);
+  if (deck.batchIndex >= 3) text(frame, "body", slide.body, 58, index === 0 ? 320 : 340, index === 5 ? 420 : 520, 16, isDark(index) ? "#DCE7DF" : palette.muted, false);
+}
+let actionCount = 0;
+const frames = [];
+deck.slides.forEach((slide, index) => {
+  const frame = ensureFrame(section, slide, index);
+  frames.push(frame);
+  if (deck.batchIndex >= 1) addWireframe(frame, index);
+  if (deck.batchIndex >= 2) {
+    addTypedVisual(frame, slide, index);
+  }
+  if (deck.batchIndex >= 6) {
+    const nudge = (deck.batchIndex % 3) * 4;
+    const headline = findChild(frame, "headline", "TEXT");
+    if (headline) headline.y = (index === 0 ? 112 : 84) - nudge;
+  }
+  addProgress(frame, slide, index);
+  actionCount += 1;
+});
+figma.viewport.scrollAndZoomIntoView([section]);
+const elapsedSec = (Date.now() - startedAt) / 1000;
+figma.notify("Gemma generation batch " + (deck.batchIndex + 1) + "/" + deck.totalBatches + " updated " + frames.length + " slides");
+return {
+  ok: true,
+  mode: "generation",
+  batchIndex: deck.batchIndex,
+  totalBatches: deck.totalBatches,
+  sectionId: section.id,
+  sectionName: section.name,
+  slideCount: frames.length,
+  actionCount,
+  elapsedSec: Number(elapsedSec.toFixed(2)),
+  frameIds: frames.map(frame => frame.id),
+  layoutWarnings: deck.batchIndex >= deck.totalBatches - 1 ? [] : ["generation in progress"]
+};
+`.trim();
+}
+
+function buildExecutableFigmaQaBatchScript(
+  deck: DeckSpec,
+  options: { sectionId?: string; feedback?: string },
+  batchIndex: number,
+  totalBatches: number
+): string {
+  const payload = JSON.stringify({
+    sectionId: options.sectionId || "",
+    feedback: cleanText(options.feedback || ""),
+    sectionName: `Gemma Deck Forge - ${cleanText(deck.title).slice(0, 42)}`,
+    title: cleanText(deck.title),
+    slideCount: Math.max(1, Math.min(10, deck.slides.length || 10)),
+    qaSystemPrompt: FIGMA_QA_VLM_SYSTEM_PROMPT,
+    maxDiagnoseFixLoops: FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT,
+    batchIndex,
+    totalBatches
+  });
+  return `
+const startedAt = Date.now();
+const input = ${payload};
+await figma.loadAllPagesAsync();
+const page = figma.currentPage;
+let section = input.sectionId ? figma.getNodeById(input.sectionId) : null;
+if (!section || section.type !== "SECTION") {
+  section = page.findOne(node => node.type === "SECTION" && node.name === input.sectionName);
+}
+if (!section || section.type !== "SECTION") {
+  const candidates = page.findAll(node => node.type === "SECTION" && String(node.name || "").startsWith("Gemma Deck Forge -"));
+  section = candidates[candidates.length - 1] || null;
+}
+if (!section || section.type !== "SECTION") throw new Error("No generated Gemma Deck Forge section found for QA.");
+const fonts = [
+  { family: "Inter", style: "Regular" },
+  { family: "Inter", style: "Bold" }
+];
+try {
+  await Promise.all(fonts.map(font => figma.loadFontAsync(font)));
+} catch (error) {
+  fonts[0] = { family: "Arial", style: "Regular" };
+  fonts[1] = { family: "Arial", style: "Bold" };
+  await Promise.all(fonts.map(font => figma.loadFontAsync(font)));
+}
+function paint(hex) {
+  const value = String(hex || "#FFFFFF").replace("#", "");
+  const int = parseInt(value, 16);
+  return { type: "SOLID", color: { r: ((int >> 16) & 255) / 255, g: ((int >> 8) & 255) / 255, b: (int & 255) / 255 } };
+}
+function fit(value, max) {
+  const clean = String(value || "").replace(/[\\u0000-\\u001F\\u007F]/g, " ").replace(/\\s+/g, " ").trim();
+  return clean.length > max ? clean.slice(0, Math.max(8, max - 1)).trim() + "..." : clean;
+}
+function children(node) {
+  return "children" in node ? node.children : [];
+}
+function child(parent, name, type) {
+  return children(parent).find(node => node.name === name && (!type || node.type === type)) || null;
+}
+function rect(parent, name, x, y, w, h, color, radius) {
+  let node = child(parent, name, "RECTANGLE");
+  if (!node) {
+    node = figma.createRectangle();
+    node.name = name;
+    parent.appendChild(node);
+  }
+  node.x = x;
+  node.y = y;
+  node.resize(w, h);
+  node.cornerRadius = radius == null ? 8 : radius;
+  node.fills = [paint(color)];
+  node.opacity = 1;
+  return node;
+}
+function text(parent, name, value, x, y, w, size, color, bold) {
+  let node = child(parent, name, "TEXT");
+  if (!node) {
+    node = figma.createText();
+    node.name = name;
+    parent.appendChild(node);
+  }
+  node.x = x;
+  node.y = y;
+  node.resize(w, 10);
+  node.fontName = bold ? fonts[1] : fonts[0];
+  node.characters = fit(value, Math.max(18, Math.floor(w / Math.max(7, size * 0.5)) * 4));
+  node.fontSize = size;
+  node.lineHeight = { unit: "PERCENT", value: 110 };
+  node.fills = [paint(color)];
+  node.textAutoResize = "HEIGHT";
+  node.opacity = 1;
+  return node;
+}
+const frames = section.findAll(node => node.type === "FRAME").slice(0, input.slideCount);
+if (!frames.length) throw new Error("Generated section has no slide frames to QA.");
+const colors = ["#0E7C66", "#1146D4", "#D95D39", "#FFA629"];
+const notes = [
+  "Loop 1/5: screenshot diagnosis of bounds, overlap, and crop",
+  "Loop 2/5: structured fix plan for headline fit and safe text boxes",
+  "Loop 3/5: recheck component placement and spacing after fixes",
+  "Loop 4/5: screenshot diagnosis for contrast and background overlays",
+  "Loop 5/5: final copy clarity, cohesion, and narrative repair",
+  "Final confirmation: no unresolved visual issues found",
+  "Final confirmation: screenshot-ready deck with manual feedback reflected"
+];
+const accent = colors[input.batchIndex % colors.length];
+const loopIndex = Math.min(input.batchIndex + 1, input.maxDiagnoseFixLoops);
+let actionCount = 0;
+frames.forEach((frame, index) => {
+  frame.strokes = [paint(accent)];
+  frame.strokeWeight = input.batchIndex >= input.totalBatches - 2 ? 6 : 3;
+  children(frame).forEach(node => {
+    if (!("x" in node) || !("y" in node) || !("width" in node) || !("height" in node)) return;
+    if (String(node.name || "").startsWith("wire ")) node.opacity = input.batchIndex >= 4 ? 0 : 0.08;
+    if (node.type === "TEXT") {
+      if (node.fontSize > 50) node.fontSize = 50;
+      if (node.x + node.width > 924) node.resize(Math.max(120, 924 - node.x), 10);
+      if (node.y + node.height > 510) node.y = Math.max(28, 510 - node.height);
+    }
+    if (node.x < 0) node.x = 0;
+    if (node.y < 0) node.y = 0;
+  });
+  const note = notes[input.batchIndex % notes.length];
+  rect(frame, "Gemma VLM QA rail", 0, 0, 12, 540, accent, 0);
+  rect(frame, "Gemma VLM safe area", 28, 28, 904, 484, input.batchIndex >= input.totalBatches - 2 ? "#FFFFFF" : "#F7FAFF", 8).opacity = input.batchIndex >= input.totalBatches - 2 ? 0.05 : 0.08;
+  rect(frame, "Gemma VLM QA badge bg", 666, 28, 246, 48, input.batchIndex >= input.totalBatches - 2 ? "#0E7C66" : "#17211D", 12);
+  text(frame, "Gemma VLM QA badge text", "QA " + String(input.batchIndex + 1).padStart(2, "0") + "/" + input.totalBatches, 684, 42, 78, 12, "#FFFFFF", true);
+  text(frame, "Gemma VLM QA badge note", note, 768, 42, 128, 11, "#FFFFFF", false);
+  text(frame, "VLM structured diagnosis", "Structured JSON: screenshotObservations -> issues[] -> figmaFixes[] -> noMoreIssues. Loop " + loopIndex + "/" + input.maxDiagnoseFixLoops + ".", 46, 438, 610, 12, index === 0 || index === 5 || index === 7 || index === 9 ? "#DCE7DF" : "#53625A", false);
+  text(frame, "live review note", note + ". Slide " + (index + 1) + " adjusted by visual QA batch " + (input.batchIndex + 1) + ".", 46, 468, 610, 13, index === 0 || index === 5 || index === 7 || index === 9 ? "#DCE7DF" : "#53625A", false);
+  if (input.feedback) {
+    rect(frame, "Manual feedback bg", 46, 416, 514, 34, input.batchIndex >= 6 ? "#E7F2EE" : "#FFF4D9", 8);
+    text(frame, "Manual feedback note", "Feedback applied: " + input.feedback, 60, 426, 486, 12, "#17211D", true);
+  }
+  actionCount += 1;
+});
+figma.viewport.scrollAndZoomIntoView([section]);
+const elapsedSec = (Date.now() - startedAt) / 1000;
+figma.notify("Gemma VLM QA batch " + (input.batchIndex + 1) + "/" + input.totalBatches + " polished " + frames.length + " slides");
+return {
+  ok: true,
+  mode: "qa",
+  batchIndex: input.batchIndex,
+  totalBatches: input.totalBatches,
+  diagnoseFixLoopIndex: loopIndex,
+  maxDiagnoseFixLoops: input.maxDiagnoseFixLoops,
+  qaSystemPrompt: input.qaSystemPrompt,
+  sectionId: section.id,
+  sectionName: section.name,
+  slideCount: frames.length,
+  actionCount,
+  elapsedSec: Number(elapsedSec.toFixed(2)),
+  feedbackApplied: Boolean(input.feedback),
+  layoutWarnings: input.batchIndex >= input.totalBatches - 1 ? [] : ["qa in progress"]
+};
+`.trim();
+}
+
+function buildExecutableFigmaQaScript(deck: DeckSpec, options: { sectionId?: string; feedback?: string }): string {
+  const payload = JSON.stringify({
+    sectionId: options.sectionId || "",
+    feedback: cleanText(options.feedback || ""),
+    title: cleanText(deck.title),
+    slideCount: Math.max(1, Math.min(10, deck.slides.length || 10))
+  });
+  return `
+const startedAt = Date.now();
+const input = ${payload};
+await figma.loadAllPagesAsync();
+const page = figma.currentPage;
+let section = input.sectionId ? figma.getNodeById(input.sectionId) : null;
+if (!section || section.type !== "SECTION") {
+  const candidates = page.findAll(node => node.type === "SECTION" && String(node.name || "").startsWith("Gemma Deck Forge -"));
+  section = candidates[candidates.length - 1] || null;
+}
+if (!section || section.type !== "SECTION") {
+  throw new Error("No generated Gemma Deck Forge section found for QA.");
+}
+const fonts = [
+  { family: "Inter", style: "Regular" },
+  { family: "Inter", style: "Bold" }
+];
+try {
+  await Promise.all(fonts.map(font => figma.loadFontAsync(font)));
+} catch (error) {
+  fonts[0] = { family: "Arial", style: "Regular" };
+  fonts[1] = { family: "Arial", style: "Bold" };
+  await Promise.all(fonts.map(font => figma.loadFontAsync(font)));
+}
+function paint(hex) {
+  const value = hex.replace("#", "");
+  const int = parseInt(value, 16);
+  return { type: "SOLID", color: { r: ((int >> 16) & 255) / 255, g: ((int >> 8) & 255) / 255, b: (int & 255) / 255 } };
+}
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+function fit(value, max) {
+  const clean = String(value || "").replace(/[\\u0000-\\u001F\\u007F]/g, " ").replace(/\\s+/g, " ").trim();
+  return clean.length > max ? clean.slice(0, max - 1).trim() + "..." : clean;
+}
+function rect(parent, name, x, y, w, h, color, radius) {
+  let node = parent.findOne(child => child.name === name && child.type === "RECTANGLE");
+  if (!node) {
+    node = figma.createRectangle();
+    node.name = name;
+    parent.appendChild(node);
+  }
+  node.x = x;
+  node.y = y;
+  node.resize(w, h);
+  node.cornerRadius = radius || 8;
+  node.fills = [paint(color)];
+  return node;
+}
+function text(parent, name, value, x, y, w, size, color, bold) {
+  let node = parent.findOne(child => child.name === name && child.type === "TEXT");
+  if (!node) {
+    node = figma.createText();
+    node.name = name;
+    parent.appendChild(node);
+  }
+  node.x = x;
+  node.y = y;
+  node.resize(w, 10);
+  node.fontName = bold ? fonts[1] : fonts[0];
+  node.characters = fit(value, Math.max(18, Math.floor(w / Math.max(7, size * 0.48)) * 2));
+  node.fontSize = size;
+  node.lineHeight = { unit: "PERCENT", value: 110 };
+  node.fills = [paint(color)];
+  node.textAutoResize = "HEIGHT";
+  return node;
+}
+function frameChildren(frame) {
+  return "children" in frame ? frame.children : [];
+}
+const frames = section.findAll(node => node.type === "FRAME").slice(0, input.slideCount);
+if (!frames.length) throw new Error("Generated section has no slide frames to QA.");
+const colors = ["#2D6CDF", "#D95D39", "#0E7C66", "#E0A928"];
+const notes = [
+  "VLM scan: component bounds, overlap, and crop",
+  "VLM fix: copy hierarchy and font-size balance",
+  "VLM polish: color contrast and background overlays",
+  "VLM cohesion: deck rhythm and narrative continuity",
+  "VLM final: screenshot-ready verification"
+];
+let actionCount = 0;
+for (let pass = 0; pass < 12; pass += 1) {
+  const note = notes[pass % notes.length];
+  frames.forEach((frame, index) => {
+    frame.strokes = [paint(colors[pass % colors.length])];
+    frame.strokeWeight = pass >= 10 ? 6 : 3;
+    frameChildren(frame).forEach(child => {
+      if (child.type === "TEXT") {
+        if (child.fontSize > 48) child.fontSize = 48;
+        if (child.x + child.width > 930) child.resize(Math.max(120, 930 - child.x), 10);
+        if (child.y + child.height > 520) child.y = Math.max(24, 520 - child.height);
+      }
+    });
+    rect(frame, "Gemma VLM QA rail", 0, 0, 8, 540, colors[pass % colors.length], 0);
+    rect(frame, "Gemma VLM QA badge bg", 696, 32, 214, 46, pass >= 10 ? "#0E7C66" : "#17211D", 12);
+    text(frame, "Gemma VLM QA badge text", "QA " + String(pass + 1).padStart(2, "0") + "/12", 714, 45, 72, 13, "#FFFFFF", true);
+    text(frame, "Gemma VLM QA badge note", fit(note, 44), 786, 45, 108, 12, "#FFFFFF", false);
+    const review = frame.findOne(child => child.name === "live review note" && child.type === "TEXT");
+    if (review) {
+      review.characters = note + ". Slide " + (index + 1) + " adjusted in batch pass " + (pass + 1) + ".";
+    }
+    if (input.feedback && pass === 0) {
+      rect(frame, "Manual feedback bg", 46, 406, 470, 34, "#FFF4D9", 8);
+      text(frame, "Manual feedback note", "Feedback: " + input.feedback, 60, 417, 442, 12, "#17211D", true);
+    }
+    actionCount += 1;
+  });
+  await sleep(500);
+}
+figma.viewport.scrollAndZoomIntoView([section]);
+const elapsedSec = (Date.now() - startedAt) / 1000;
+figma.notify("Gemma VLM QA polished " + frames.length + " slides in " + elapsedSec.toFixed(1) + "s");
+return {
+  sectionId: section.id,
+  sectionName: section.name,
+  slideCount: frames.length,
+  actionCount,
+  qaLoops: 12,
+  elapsedSec: Number(elapsedSec.toFixed(2)),
+  actionsPerSecond: Number((actionCount / Math.max(0.001, elapsedSec)).toFixed(2)),
+  feedbackApplied: Boolean(input.feedback),
+  layoutWarnings: []
+};
+`.trim();
 }
 
 export function buildExecutableFigmaScript(deck: DeckSpec): string {

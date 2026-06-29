@@ -512,6 +512,60 @@ textarea {
   gap: 8px;
 }
 
+.figmaActivityPanel {
+  margin: 14px 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 12px;
+}
+
+.figmaActivityPanel .stageMiniHeader > span {
+  background: #fffdf7;
+  color: #17211d;
+}
+
+.figmaEventGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.figmaEvent {
+  min-height: 112px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 4px solid #2d6cdf;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 9px;
+}
+
+.figmaEvent.done {
+  border-top-color: #0e7c66;
+}
+
+.figmaEvent span {
+  color: #9fd8cc;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.figmaEvent strong {
+  display: block;
+  margin: 5px 0;
+  color: #fffdf7;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.figmaEvent p {
+  margin: 0;
+  color: #dce7df;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .stageCard {
   min-height: 118px;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -552,6 +606,26 @@ textarea {
 
 .feedbackPanel h2 {
   margin: 0 0 12px;
+}
+
+.feedbackLoopPanel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d8d0bf;
+  border-left: 5px solid #0e7c66;
+  border-radius: 8px;
+  background: #f7faff;
+  padding: 14px;
+}
+
+.feedbackLoopPanel h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.feedbackLoopPanel p {
+  margin: 8px 0 0;
+  color: #53625a;
 }
 
 .feedbackGrid {
@@ -598,7 +672,7 @@ textarea {
 
 .stepper {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -757,6 +831,7 @@ textarea {
 
 @media (max-width: 1180px) {
   .stepper,
+  .figmaEventGrid,
   .swarmDraftGrid,
   .slideGrid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -785,7 +860,8 @@ textarea {
   .contextLaneGrid,
   .evidenceTray,
   .slideGrid,
-  .feedbackGrid,
+    .feedbackGrid,
+    .figmaEventGrid,
     .stageGrid,
     .stepper,
     .swarmDraftGrid,

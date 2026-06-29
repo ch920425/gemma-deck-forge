@@ -6,7 +6,7 @@ test("starts with a clean idea-only screen and no raw implementation artifacts",
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Figma Gem: Super-AI Speed Slide Prep" })).toBeVisible();
   await expect(page.getByText(/CEREBRAL AGENT SWARM/i)).toBeVisible();
-  await expect(page.getByText(/staged workflow|swarm loops|Figma QA/i)).toHaveCount(0);
+  await expect(page.getByText(/staged workflow|swarm loops/i)).toHaveCount(0);
   await expect(page.getByLabel("High-level idea")).toBeVisible();
   await expect(page.getByLabel(/^Audience$/i)).toHaveCount(0);
   await expect(page.getByLabel(/^Slides$/i)).toHaveCount(0);
@@ -17,8 +17,8 @@ test("starts with a clean idea-only screen and no raw implementation artifacts",
 
 test("runs context retrieval and five-agent context writing as a staged swarm", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /^Next/i }).click();
-  await page.getByRole("button", { name: /Retrieve context from KB/i }).click();
+  await stageBoard(page).getByRole("button", { name: /^Next/i }).click();
+  await stageBoard(page).getByRole("button", { name: /Retrieve context from KB/i }).click();
 
   await expect(page.getByLabel("context swarm")).toBeVisible({ timeout: 3_000 });
   await expect(page.locator(".contextLane")).toHaveCount(4, { timeout: 30_000 });
@@ -31,39 +31,55 @@ test("runs context retrieval and five-agent context writing as a staged swarm", 
 test("runs brainstorm, outline, and Figma finalizer without exposing raw JSON", async ({ page }) => {
   test.setTimeout(150_000);
   await page.goto("/");
-  await page.getByRole("button", { name: /^Next/i }).click();
-  await page.getByRole("button", { name: /Retrieve context from KB/i }).click();
+  await stageBoard(page).getByRole("button", { name: /^Next/i }).click();
+  await stageBoard(page).getByRole("button", { name: /Retrieve context from KB/i }).click();
   await expect(page.getByLabel("Context writing swarm").locator(".agentLane")).toHaveCount(5, { timeout: 30_000 });
 
-  await page.getByRole("button", { name: /^Next/i }).click();
-  await page.getByRole("button", { name: /Run brainstorm swarm/i }).click();
+  await stageBoard(page).getByRole("button", { name: /^Next/i }).click();
+  await stageBoard(page).getByRole("button", { name: /Run brainstorm swarm/i }).click();
   await expect(page.getByLabel("Brainstorm agents")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByLabel("Brainstorm agents").locator(".agentLane")).toHaveCount(5);
   await expect(page.getByText("Final brainstorm brief")).toBeVisible();
 
-  await page.getByRole("button", { name: /^Next/i }).click();
+  await stageBoard(page).getByRole("button", { name: /^Next/i }).click();
   const outlineStartedAt = Date.now();
-  await page.getByRole("button", { name: /Draft slide outline/i }).click();
+  await stageBoard(page).getByRole("button", { name: /Draft slide outline/i }).click();
   await expect(page.locator(".slideCard")).toHaveCount(10, { timeout: 90_000 });
   expect(Date.now() - outlineStartedAt).toBeGreaterThanOrEqual(9_500);
   await expect(page.locator(".slideRequirement")).toHaveCount(10);
   await expect(page.locator(".slideCard .layout", { hasText: "Critique / Fix Pass" })).toHaveCount(1);
+  await expect(page.getByLabel("workflow steps").getByRole("button", { name: /^Figma Build/i })).toBeVisible();
+  await expect(stageBoard(page).getByRole("button", { name: /^Generate slides/i })).toBeVisible();
+  await expect(stageBoard(page).getByRole("button", { name: /^Figma Build/i })).toHaveCount(0);
 
   const figmaHarness = await connectFigmaHarness(page);
   const figmaStartedAt = Date.now();
-  await page.getByRole("button", { name: /Generate deck/i }).click();
-  const command = await figmaHarness.nextExecuteCommand();
-  expect(String(command.params?.code || "")).toContain("figma.createSection");
-  await new Promise((resolve) => setTimeout(resolve, 8_200));
-  figmaHarness.complete(command.id, {
-    success: true,
-    result: { slideCount: 10, actionCount: 50, actionsPerSecond: 5.9, layoutWarnings: [] }
-  });
-  await expect(page.getByRole("heading", { name: "Pixel-perfect Figma Deck Finalizer" })).toBeVisible();
-  await expect(page.getByText(/visual QA|overlap|screenshot/i).first()).toBeVisible();
+  await stageBoard(page).getByRole("button", { name: /^Generate slides/i }).click();
+  await expect(page.getByRole("heading", { name: "Figma Slide Generation Swarm" })).toBeVisible();
+  await figmaHarness.completeExecuteCommands(16, "generation");
+  expect(figmaHarness.executeCount()).toBe(16);
+  await expect(page.getByText(/Slides generated through/i)).toBeVisible({ timeout: 30_000 });
+  expect(Date.now() - figmaStartedAt).toBeGreaterThanOrEqual(7_000);
   await expect(page.locator(".stageCard")).toHaveCount(50);
-  await expect(page.getByText(/Built and QA-gated/i)).toBeVisible({ timeout: 40_000 });
-  expect(Date.now() - figmaStartedAt).toBeGreaterThanOrEqual(14_800);
+  await expect(page.getByLabel("Figma agent activity")).toBeVisible();
+
+  const qaStartedAt = Date.now();
+  await stageBoard(page).getByRole("button", { name: /^Run Figma QA Loop/i }).click();
+  await expect(page.getByRole("heading", { name: "Gemma VLM QA + Polish Swarm" })).toBeVisible();
+  await expect(page.getByText(/screenshot.*structured diagnosis|screenshot.*VLM input/i).first()).toBeVisible();
+  await figmaHarness.completeExecuteCommands(7, "qa");
+  expect(figmaHarness.executeCount()).toBe(23);
+  await expect(page.getByText(/VLM QA\/polish complete/i)).toBeVisible({ timeout: 30_000 });
+  expect(Date.now() - qaStartedAt).toBeGreaterThanOrEqual(6_000);
+
+  await page.getByLabel("Feedback for Figma QA").fill("Make slide 5 more metric-heavy and tighten the final CTA.");
+  const feedbackStartedAt = Date.now();
+  await stageBoard(page).getByRole("button", { name: /^Apply feedback with QA loop/i }).click();
+  await figmaHarness.completeExecuteCommands(7, "qa-feedback");
+  expect(figmaHarness.executeCount()).toBe(30);
+  await expect(page.getByText(/Feedback applied: yes/i)).toBeVisible({ timeout: 30_000 });
+  expect(Date.now() - feedbackStartedAt).toBeGreaterThanOrEqual(6_000);
+
   await expect(page.getByText(/demo-safe mode|Bridge detail/i)).toHaveCount(0);
   await expect(page.getByText("Figma JSON")).toHaveCount(0);
   await expect(page.getByText(/deckTitle|actionsPerSecond/)).toHaveCount(0);
@@ -75,6 +91,7 @@ interface FigmaHarnessCommand {
   id: string;
   method?: string;
   params?: { code?: string; timeout?: number };
+  receivedAt: number;
 }
 
 async function connectFigmaHarness(page: import("@playwright/test").Page) {
@@ -85,8 +102,9 @@ async function connectFigmaHarness(page: import("@playwright/test").Page) {
 
   const socket = new WebSocket(`ws://localhost:${status.port}`);
   const messages: FigmaHarnessCommand[] = [];
+  const completedIds = new Set<string>();
   socket.addEventListener("message", (event) => {
-    messages.push(JSON.parse(String(event.data)) as FigmaHarnessCommand);
+    messages.push({ ...(JSON.parse(String(event.data)) as FigmaHarnessCommand), receivedAt: Date.now() });
   });
   await waitForSocketOpen(socket);
   socket.send(
@@ -116,9 +134,50 @@ async function connectFigmaHarness(page: import("@playwright/test").Page) {
   return {
     async nextExecuteCommand() {
       await expect
-        .poll(() => messages.find((message) => message.method === "EXECUTE_CODE")?.id || "", { timeout: 20_000 })
+        .poll(
+          () => messages.find((message) => message.method === "EXECUTE_CODE" && !completedIds.has(message.id))?.id || "",
+          { timeout: 20_000 }
+        )
         .not.toBe("");
-      return messages.find((message) => message.method === "EXECUTE_CODE")!;
+      return messages.find((message) => message.method === "EXECUTE_CODE" && !completedIds.has(message.id))!;
+    },
+    async completeExecuteCommands(count: number, mode: "generation" | "qa" | "qa-feedback") {
+      const receivedCommands: FigmaHarnessCommand[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const command = await this.nextExecuteCommand();
+        expect(Number(command.params?.timeout)).toBeLessThanOrEqual(2_000);
+        if (mode === "generation" && index === 0) expect(String(command.params?.code || "")).toContain("figma.createSection");
+        if (mode !== "generation") expect(String(command.params?.code || "")).toContain("Gemma VLM");
+        if (mode !== "generation") expect(String(command.params?.code || "")).toMatch(/maxDiagnoseFixLoops"?\s*:\s*5/);
+        receivedCommands.push(command);
+        completedIds.add(command.id);
+        socket.send(
+          JSON.stringify({
+            id: command.id,
+            result: {
+              success: true,
+              result: {
+                sectionId: "section-e2e",
+                sectionName: "Gemma Deck Forge - E2E",
+                slideCount: 10,
+                actionCount: 10,
+                actionsPerSecond: 18,
+                batchIndex: index,
+                totalBatches: count,
+                feedbackApplied: mode === "qa-feedback",
+                layoutWarnings: [],
+                frameIds: Array.from({ length: 10 }, (_, slideIndex) => `frame-${slideIndex + 1}`)
+              }
+            }
+          })
+        );
+      }
+      expect(receivedCommands).toHaveLength(count);
+      expect(receivedCommands.map((command) => command.method)).toEqual(Array(count).fill("EXECUTE_CODE"));
+      expectCommandCadence(receivedCommands, mode === "generation" ? 500 : 1_000);
+    },
+    executeCount() {
+      return messages.filter((message) => message.method === "EXECUTE_CODE").length;
     },
     complete(id: string, result: unknown) {
       socket.send(JSON.stringify({ id, result }));
@@ -127,6 +186,16 @@ async function connectFigmaHarness(page: import("@playwright/test").Page) {
       socket.close();
     }
   };
+}
+
+function stageBoard(page: import("@playwright/test").Page) {
+  return page.locator(".stageBoard");
+}
+
+function expectCommandCadence(commands: FigmaHarnessCommand[], expectedIntervalMs: number) {
+  for (let index = 1; index < commands.length; index += 1) {
+    expect(commands[index].receivedAt - commands[index - 1].receivedAt).toBeGreaterThanOrEqual(expectedIntervalMs - 150);
+  }
 }
 
 function waitForSocketOpen(socket: WebSocket): Promise<void> {

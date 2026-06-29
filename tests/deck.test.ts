@@ -2,7 +2,17 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildFigmaBuildPlan, buildFigmaHandoffPrompt, buildFigmaSpec } from "../src/shared/figma";
+import {
+  FIGMA_GENERATION_BATCH_COUNT,
+  FIGMA_QA_BATCH_COUNT,
+  FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT,
+  FIGMA_QA_VLM_SYSTEM_PROMPT,
+  buildFigmaBuildPlan,
+  buildFigmaGenerationBatchScripts,
+  buildFigmaHandoffPrompt,
+  buildFigmaQaBatchScripts,
+  buildFigmaSpec
+} from "../src/shared/figma";
 import { normalizeDeck, normalizeGenerateRequest, normalizeSlide } from "../src/server/deck";
 import { feedbackPath, readFeedbackEntries, readFeedbackMemory, saveFeedback } from "../src/server/feedbackStore";
 import type { GenerateRequest, SlideSpec } from "../src/shared/schema";
@@ -194,25 +204,62 @@ describe("figma handoff", () => {
     expect(plan.target).toBe("figma-design-frames");
     expect(plan.stages).toHaveLength(50);
     expect(plan.stages.slice(0, 5).every((stage) => stage.phase === "build")).toBe(true);
-    expect(plan.checklist.join(" ")).toContain("7s VLM-style visual QA loop");
-    expect(plan.script).toContain("actionsPerSecond");
+    expect(plan.checklist.join(" ")).toContain("every 0.5s");
     expect(plan.script).toContain("figma.createSection");
-    expect(plan.script).toContain("actionDelayMs");
     expect(plan.script).toContain("maxBottom");
-    expect(plan.script).toContain("fitString");
-    expect(plan.script).toContain("intentional reference cue");
+    expect(plan.script).toContain("wireframe scaffold");
+    expect(plan.script).toContain("referenceCue");
     expect(plan.script).toContain("layoutWarnings");
-    expect(plan.script).not.toContain("referenceFrames");
-    expect(plan.script).not.toContain("exportAsync");
-    expect(plan.script).not.toContain("imageHash");
-    expect(plan.script).toContain("renderBeforeAfter");
-    expect(plan.script).toContain("renderMetric");
-    expect(plan.script).toContain("renderArtifact");
-    expect(plan.script).toContain("Critique / Fix Pass");
-    expect(plan.script).toContain("rendererByFormat");
-    expect(plan.script).toContain("Speak source asset");
-    expect(plan.script).toContain("The system escapes the identical-slide trap");
+    expect(plan.script).not.toContain("sleep(");
     expect(() => new Function("(async function() {\n" + plan.script + "\n})()")).not.toThrow();
+  });
+
+  it("builds distinct generation and VLM QA batch scripts for repeated bridge calls", () => {
+    const deck = normalizeDeck(
+      {
+        title: "Parallel Demo",
+        audience: "Judges",
+        thesis: "Speed is visible.",
+        slides: [
+          {
+            title: "One",
+            headline: "One headline",
+            body: "One body",
+            bullets: ["Build", "Review", "Polish"],
+            evidence: ["Proof"],
+            visual: "Visual",
+            layout: "demo",
+            accent: "#0E7C66",
+            speakerNotes: "Notes"
+          }
+        ]
+      },
+      {
+        idea: "x",
+        audience: "y",
+        brainstormNotes: "",
+        gbrainContext: "",
+        slideCount: 1
+      }
+    );
+    const generationScripts = buildFigmaGenerationBatchScripts(deck);
+    const qaScripts = buildFigmaQaBatchScripts(deck, { sectionId: "section-1", feedback: "Make the metric slide stronger." });
+
+    expect(generationScripts).toHaveLength(FIGMA_GENERATION_BATCH_COUNT);
+    expect(qaScripts).toHaveLength(FIGMA_QA_BATCH_COUNT);
+    expect(FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT).toBe(5);
+    expect(FIGMA_QA_VLM_SYSTEM_PROMPT).toContain("screenshotObservations");
+    expect(FIGMA_QA_VLM_SYSTEM_PROMPT).toContain("figmaFixes");
+    expect(new Set(generationScripts).size).toBe(FIGMA_GENERATION_BATCH_COUNT);
+    expect(new Set(qaScripts).size).toBe(FIGMA_QA_BATCH_COUNT);
+    expect(generationScripts[0]).toContain("blank frames");
+    expect(generationScripts.at(-1)).toContain("ready deck");
+    expect(qaScripts[0]).toContain("Gemma VLM");
+    expect(qaScripts[0]).toContain("screenshotObservations");
+    expect(qaScripts[0]).toContain("maxDiagnoseFixLoops");
+    expect(qaScripts.join("\n")).toContain("Feedback applied");
+    expect(generationScripts.every((script) => !script.includes("sleep("))).toBe(true);
+    expect(qaScripts.every((script) => !script.includes("sleep("))).toBe(true);
   });
 });
 

@@ -1,13 +1,21 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import { buildFigmaBuildPlan, buildFigmaHandoffPrompt } from "../shared/figma";
+import {
+  FIGMA_BATCH_INTERVAL_MS,
+  FIGMA_QA_BATCH_INTERVAL_MS,
+  buildFigmaBuildPlan,
+  buildFigmaGenerationBatchScripts,
+  buildFigmaHandoffPrompt,
+  buildFigmaQaBatchScripts,
+  buildFigmaQaPlan
+} from "../shared/figma";
 import { buildBrainstormPrompt } from "../shared/prompts";
 import type { BrainstormResponse, DeckSpec, GenerateRequest, PolishRequest } from "../shared/schema";
 import { callCerebrasJson, fallbackBrainstorm, hasCerebrasKey } from "./cerebras";
 import { runContextSwarm } from "./contextSwarm";
 import { generateDeck, polishDeck } from "./deck";
 import { readFeedbackEntries, readFeedbackMemory, saveFeedback } from "./feedbackStore";
-import { detectEstablishedFigmaBridgePorts, getFigmaBridgeServer } from "./figmaBridge";
+import { detectEstablishedFigmaBridgePorts, getFigmaBridgeServer, type FigmaBridgeServer } from "./figmaBridge";
 import { runGbrainQuery } from "./gbrain";
 import { runBrainstormSwarm, runContextWritingSwarm } from "./textSwarms";
 
@@ -237,12 +245,70 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
       return;
     }
     try {
-      const result = await bridge.executeCode(plan.script, 45_000);
+      const result = await executeFigmaBatchSequence(bridge, buildFigmaGenerationBatchScripts(body.deck), "generation");
       sendJson(res, 200, {
         ok: true,
         status: bridge.status(),
         plan,
-        result
+        result: { success: true, result }
+      });
+    } catch (error) {
+      sendJson(res, 409, {
+        ok: false,
+        status: bridge.status(),
+        plan,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/figma/qa") {
+    const body = (await readJson(req)) as { deck?: DeckSpec; sectionId?: string; feedback?: string };
+    if (!body.deck) {
+      sendJson(res, 400, { error: "missing_deck" });
+      return;
+    }
+    const bridge = getFigmaBridgeServer();
+    await bridge.start();
+    const plan = buildFigmaQaPlan(body.deck, {
+      sectionId: body.sectionId,
+      feedback: body.feedback
+    });
+    const connected = await bridge.waitForConnection(12_000);
+    if (!connected) {
+      const status = bridge.status();
+      const detectedPorts = await detectEstablishedFigmaBridgePorts();
+      sendJson(res, 409, {
+        ok: false,
+        status: {
+          ...status,
+          detectedFigmaPorts: detectedPorts,
+          message:
+            detectedPorts.length > 0
+              ? `Gemma Deck Forge bridge on port ${status.port} is not attached. Figma is connected to other bridge port(s) ${detectedPorts.join(", ")}; press Reconnect in the Figma Desktop Bridge plugin or rerun it so it attaches to this app bridge.`
+              : status.message
+        },
+        plan,
+        error: "Figma Desktop Bridge is not connected to the Gemma Deck Forge app bridge."
+      });
+      return;
+    }
+    try {
+      const result = await executeFigmaBatchSequence(
+        bridge,
+        buildFigmaQaBatchScripts(body.deck, {
+          sectionId: body.sectionId,
+          feedback: body.feedback
+        }),
+        "qa",
+        FIGMA_QA_BATCH_INTERVAL_MS
+      );
+      sendJson(res, 200, {
+        ok: true,
+        status: bridge.status(),
+        plan,
+        result: { success: true, result }
       });
     } catch (error) {
       sendJson(res, 409, {
@@ -260,6 +326,78 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
 
 function defaultAudience(): string {
   return "Cerebras x Gemma hackathon judges and enterprise AI buyers";
+}
+
+async function executeFigmaBatchSequence(
+  bridge: FigmaBridgeServer,
+  scripts: string[],
+  mode: "generation" | "qa",
+  intervalMs = FIGMA_BATCH_INTERVAL_MS
+): Promise<Record<string, unknown>> {
+  const startedAt = Date.now();
+  const batchResults: Array<Record<string, unknown>> = [];
+  let actionCount = 0;
+  let slideCount = 0;
+  let sectionId = "";
+  let sectionName = "";
+  let frameIds: string[] = [];
+  let layoutWarnings: string[] = [];
+  let feedbackApplied = false;
+
+  for (let index = 0; index < scripts.length; index += 1) {
+    const batchStartedAt = Date.now();
+    const rawResult = await bridge.executeCode(scripts[index], 2_000);
+    const payload = unwrapBridgeResult(rawResult);
+    batchResults.push(payload);
+    actionCount += numeric(payload.actionCount);
+    slideCount = Math.max(slideCount, numeric(payload.slideCount));
+    sectionId = stringValue(payload.sectionId) || sectionId;
+    sectionName = stringValue(payload.sectionName) || sectionName;
+    if (Array.isArray(payload.frameIds)) frameIds = payload.frameIds.map(String);
+    if (Array.isArray(payload.layoutWarnings)) layoutWarnings = payload.layoutWarnings.map(String);
+    feedbackApplied = feedbackApplied || payload.feedbackApplied === true;
+
+    if (index < scripts.length - 1) {
+      const elapsedMs = Date.now() - batchStartedAt;
+      await sleep(Math.max(0, intervalMs - elapsedMs));
+    }
+  }
+
+  const elapsedSec = (Date.now() - startedAt) / 1000;
+  return {
+    mode,
+    batchCount: scripts.length,
+    bridgeCommandCount: scripts.length,
+    batchIntervalMs: intervalMs,
+    sectionId,
+    sectionName,
+    slideCount,
+    frameIds,
+    actionCount,
+    elapsedSec: Number(elapsedSec.toFixed(2)),
+    actionsPerSecond: Number((actionCount / Math.max(0.001, elapsedSec)).toFixed(2)),
+    feedbackApplied,
+    layoutWarnings,
+    batchResults
+  };
+}
+
+function unwrapBridgeResult(rawResult: unknown): Record<string, unknown> {
+  const wrapper = rawResult as { result?: unknown };
+  const payload = wrapper && typeof wrapper === "object" && "result" in wrapper ? wrapper.result : rawResult;
+  return payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+}
+
+function numeric(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function startSse(res: ServerResponse): void {

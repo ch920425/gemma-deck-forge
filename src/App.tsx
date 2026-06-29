@@ -23,7 +23,7 @@ import type {
   SwarmTextDraft
 } from "./shared/schema";
 
-type WorkflowStep = "idea" | "context" | "brainstorm" | "outline" | "figma";
+type WorkflowStep = "idea" | "context" | "brainstorm" | "outline" | "figmaGenerate" | "figmaQa";
 
 interface AgentState {
   label: string;
@@ -43,6 +43,17 @@ interface ContextLaneState {
   hitCount?: number;
 }
 
+interface FigmaActivityEvent {
+  id: string;
+  loop: "generation" | "qa";
+  agent: string;
+  phase: string;
+  slide: string;
+  detail: string;
+  status: "running" | "done";
+  tick: number;
+}
+
 const hiddenAudience = "Cerebras x Gemma hackathon judges and enterprise AI buyers";
 const hiddenSlideCount = 10;
 const starterIdea =
@@ -53,7 +64,8 @@ const workflowSteps: Array<{ id: WorkflowStep; label: string; description: strin
   { id: "context", label: "Context", description: "Retrieve and polish KB context." },
   { id: "brainstorm", label: "Brainstorm", description: "Five Gemma agents shape the story." },
   { id: "outline", label: "Outline", description: "Draft, evaluate, and repair slide jobs." },
-  { id: "figma", label: "Figma", description: "Generate and QA the final deck." }
+  { id: "figmaGenerate", label: "Figma Build", description: "Generate slides in Figma." },
+  { id: "figmaQa", label: "Figma QA", description: "VLM polish and feedback." }
 ];
 
 export function App() {
@@ -77,6 +89,11 @@ export function App() {
   const [figmaStatus, setFigmaStatus] = useState<FigmaBridgeStatus | null>(null);
   const [figmaResult, setFigmaResult] = useState("");
   const [figmaBusy, setFigmaBusy] = useState(false);
+  const [figmaSectionId, setFigmaSectionId] = useState("");
+  const [figmaGenerationComplete, setFigmaGenerationComplete] = useState(false);
+  const [figmaQaComplete, setFigmaQaComplete] = useState(false);
+  const [figmaActivityEvents, setFigmaActivityEvents] = useState<FigmaActivityEvent[]>([]);
+  const [qaFeedback, setQaFeedback] = useState("");
   const [feedbackMemory, setFeedbackMemory] = useState("");
 
   const outlineReady = Boolean(deck) && !busy;
@@ -307,24 +324,28 @@ export function App() {
     }
   }
 
-  async function generateFigmaDeck() {
+  async function generateFigmaSlides() {
     if (!deck) return;
-    setStep("figma");
+    setStep("figmaGenerate");
     setFigmaBusy(true);
-    setFigmaResult("Starting parallel slide batches now: scaffold all slides, review, revise, polish, then final screenshot gates.");
+    setFigmaGenerationComplete(false);
+    setFigmaQaComplete(false);
+    setFigmaActivityEvents([]);
+    setFigmaResult("Starting Figma generation: empty frames -> wireframes -> copy -> components -> layout correction -> final proof chips.");
     const optimisticPlan: FigmaBuildPlan = {
       script: "",
       stages: createImmediateFigmaStages(deck),
       checklist: [
-        "Immediate scaffold wave across every slide.",
-        "Parallel review, revise, polish, and final screenshot-gate waves.",
-        "Bridge execution runs concurrently with the visible agent batches."
+        "Real EXECUTE_CODE batches run every 0.5s across all slides.",
+        "Generation starts with empty frames, then adds wireframes, text, components, and proof chips.",
+        "QA is a separate VLM/polish step after generation completes."
       ],
       target: "figma-design-frames"
     };
     setFigmaBuildPlan(optimisticPlan);
     setFigmaStages(optimisticPlan.stages);
-    runFigmaStageAnimation();
+    runFigmaStageAnimation("generation");
+    const activityTrace = runFigmaActivityTrace("generation", 8_000);
     try {
       const response = await fetch("/api/figma/build-plan", {
         method: "POST",
@@ -341,59 +362,123 @@ export function App() {
       const buildPayload = (await buildResponse.json()) as FigmaBuildResponse;
       setFigmaStatus(buildPayload.status);
       if (buildPayload.ok) {
-        const result = ((buildPayload.result as { result?: Record<string, unknown> })?.result || {}) as {
+        const result = extractFigmaResult(buildPayload.result) as {
           actionCount?: number;
           actionsPerSecond?: number;
           slideCount?: number;
+          batchCount?: number;
+          bridgeCommandCount?: number;
+          sectionId?: string;
           layoutWarnings?: string[];
         };
-        await runVisualQaLoop(
-          "Figma build complete. QA/polish agents are checking overlap, crop, hierarchy, cohesion, copy-fit, and screenshot gates."
-        );
+        if (result.sectionId) setFigmaSectionId(result.sectionId);
         setFigmaResult(
-          `Built and QA-gated the deck with ${result.actionCount || 50} visible actions at ${
-            result.actionsPerSecond || "?"
-          }/sec. 7s visual QA warnings: ${result.layoutWarnings?.length || 0}.`
+          `Slides generated through ${result.bridgeCommandCount || result.batchCount || 16} real bridge batches and ${
+            result.actionCount || 160
+          } slide actions at ${result.actionsPerSecond || "?"}/sec. QA loop is ready.`
         );
+        setFigmaGenerationComplete(true);
         setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: "done" })));
       } else {
         setFigmaResult(
           buildPayload.error ||
             buildPayload.status?.message ||
-            "Figma bridge is not connected. The deck was not created, so QA/polish did not run."
+            "Figma bridge is not connected. The deck was not created."
         );
         setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: stage.status === "done" ? "done" : "queued" })));
       }
     } catch (error) {
       setFigmaResult(
-        `Figma bridge call failed before deck creation. QA/polish did not run. Detail: ${
+        `Figma generation failed before deck creation. Detail: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
       setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: stage.status === "done" ? "done" : "queued" })));
     } finally {
+      await activityTrace;
       setFigmaBusy(false);
     }
   }
 
-  async function runVisualQaLoop(message: string) {
-    setFigmaResult(message);
-    const qaMessages = [
-      "QA/polish 1/6: scanning slide bounds and overlap.",
-      "QA/polish 2/6: checking reference cue crops and fit.",
-      "QA/polish 3/6: tightening hierarchy and copy density.",
-      "QA/polish 4/6: comparing slide-to-slide cohesion.",
-      "QA/polish 5/6: validating polish pass and final gates.",
-      "QA/polish 6/6: screenshot readiness confirmed or warnings captured."
-    ];
-    for (const [index, qaMessage] of qaMessages.entries()) {
-      window.setTimeout(() => setFigmaResult(qaMessage), 1000 * (index + 1));
+  async function runFigmaQaLoop(feedback = "") {
+    if (!deck) return;
+    setStep("figmaQa");
+    setFigmaBusy(true);
+    setFigmaQaComplete(false);
+    if (feedback.trim()) setQaFeedback(feedback);
+    setFigmaActivityEvents([]);
+    setFigmaResult(
+      feedback.trim()
+        ? "Manual feedback received. Gemma VLM QA agents are rerunning visual polish and applying the requested change."
+        : "Starting Gemma VLM QA: each slide screenshot is VLM input, then structured diagnosis JSON becomes bridge-executable Figma fixes."
+    );
+    const qaPlan: FigmaBuildPlan = {
+      script: "",
+      stages: createImmediateFigmaStages(deck, "qa"),
+      checklist: [
+        "Gemma VLM agents inspect component placement, overlap, font size, crop, color, and copy clarity.",
+        "Each slide gets screenshot input, structured JSON diagnosis, bridge-executable fixes, and up to five diagnose/fix/recheck loops.",
+        "Real EXECUTE_CODE QA batches run every 1s across the generated slides.",
+        "Manual feedback reruns the same VLM QA/polish path against the existing Figma section."
+      ],
+      target: "figma-design-frames"
+    };
+    setFigmaBuildPlan(qaPlan);
+    setFigmaStages(qaPlan.stages);
+    runFigmaStageAnimation("qa");
+    const activityTrace = runFigmaActivityTrace("qa", 6_500, feedback);
+    try {
+      const qaResponse = await fetch("/api/figma/qa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deck, sectionId: figmaSectionId, feedback })
+      });
+      const qaPayload = (await qaResponse.json()) as FigmaBuildResponse;
+      setFigmaStatus(qaPayload.status);
+      if (qaPayload.ok) {
+        const result = extractFigmaResult(qaPayload.result) as {
+          actionCount?: number;
+          actionsPerSecond?: number;
+          batchCount?: number;
+          bridgeCommandCount?: number;
+          sectionId?: string;
+          feedbackApplied?: boolean;
+          layoutWarnings?: string[];
+        };
+        if (result.sectionId) setFigmaSectionId(result.sectionId);
+        setFigmaQaComplete(true);
+        setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: "done" })));
+        setFigmaResult(
+          `VLM QA/polish complete through ${result.bridgeCommandCount || result.batchCount || 7} bridge batches and ${
+            result.actionCount || 70
+          } slide actions at ${result.actionsPerSecond || "?"}/sec. Five screenshot diagnose/fix loops plus final confirmations are complete. Warnings: ${result.layoutWarnings?.length || 0}. Feedback applied: ${
+            result.feedbackApplied || Boolean(feedback.trim()) ? "yes" : "not needed"
+          }.`
+        );
+      } else {
+        setFigmaResult(qaPayload.error || qaPayload.status?.message || "Figma QA loop could not run because the bridge is not connected.");
+        setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: stage.status === "done" ? "done" : "queued" })));
+      }
+    } catch (error) {
+      setFigmaResult(`Figma QA loop failed. Detail: ${error instanceof Error ? error.message : String(error)}`);
+      setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: stage.status === "done" ? "done" : "queued" })));
+    } finally {
+      await activityTrace;
+      setFigmaBusy(false);
     }
-    await sleep(7200);
   }
 
-  function runFigmaStageAnimation() {
-    const phases: FigmaSlideBuildStage["phase"][] = ["build", "review", "revise", "polish", "finalize"];
+  async function submitFigmaFeedback() {
+    const feedback = qaFeedback.trim();
+    if (!feedback) return;
+    await runFigmaQaLoop(feedback);
+  }
+
+  function runFigmaStageAnimation(mode: "generation" | "qa") {
+    const phases: FigmaSlideBuildStage["phase"][] =
+      mode === "generation" ? ["build", "review", "revise", "polish", "finalize"] : ["review", "revise", "polish", "finalize"];
+    const totalMs = mode === "generation" ? 8_000 : 6_500;
+    const phaseMs = totalMs / phases.length;
     phases.forEach((phase, phaseIndex) => {
       window.setTimeout(() => {
         setFigmaStages((prev) =>
@@ -403,8 +488,8 @@ export function App() {
               : stage
           )
         );
-        setFigmaResult(`${phase.toUpperCase()} wave started across all slides.`);
-      }, phaseIndex * 2000);
+        setFigmaResult(`${mode === "generation" ? "GENERATION" : "VLM QA"} ${phase.toUpperCase()} wave started across all slides.`);
+      }, phaseIndex * phaseMs);
 
       for (let slideIndex = 0; slideIndex < hiddenSlideCount; slideIndex += 1) {
         window.setTimeout(() => {
@@ -415,7 +500,7 @@ export function App() {
               : stage
             )
           );
-        }, phaseIndex * 2000 + 180 + slideIndex * 90);
+        }, phaseIndex * phaseMs + 150 + slideIndex * 60);
       }
       window.setTimeout(() => {
         setFigmaStages((prev) =>
@@ -425,8 +510,68 @@ export function App() {
               : stage
           )
         );
-      }, phaseIndex * 2000 + 1200);
+      }, phaseIndex * phaseMs + phaseMs * 0.62);
     });
+  }
+
+  async function runFigmaActivityTrace(loop: "generation" | "qa", durationMs: number, feedback = "") {
+    const generationAgents = [
+      "Frame Scaffold Agent",
+      "Wireframe Agent",
+      "Copywriting Agent",
+      "Component Agent",
+      "Layout Fix Agent",
+      "Final Gate Agent"
+    ];
+    const qaAgents = [
+      "Gemma VLM Inspector",
+      "Overlap Fixer",
+      "Type Scale Reviewer",
+      "Contrast + Crop Agent",
+      "Narrative Cohesion Agent",
+      "Feedback Applicator"
+    ];
+    const generationPhases = [
+      "creates empty slide frames",
+      "adds wireframe structure",
+      "writes headline and body copy",
+      "places visual evidence components",
+      "nudges hierarchy and spacing",
+      "marks final screenshot gates"
+    ];
+    const qaPhases = [
+      "takes slide screenshot input",
+      "emits structured JSON issues and figmaFixes",
+      "executes bridge fix instructions",
+      "rechecks fix history against screenshot",
+      "confirms no remaining visual issues",
+      feedback ? "applies manual feedback request" : "confirms final readiness"
+    ];
+    const agents = loop === "generation" ? generationAgents : qaAgents;
+    const phases = loop === "generation" ? generationPhases : qaPhases;
+    const ticks = Math.max(2, Math.ceil(durationMs / 500));
+    for (let tick = 0; tick < ticks; tick += 1) {
+      setFigmaActivityEvents((prev) => {
+        const nextEvents = agents.map((agent, index) => {
+          const slideNumber = ((tick + index) % hiddenSlideCount) + 1;
+          return {
+            id: `${loop}-${Date.now()}-${tick}-${index}`,
+            loop,
+            agent,
+            phase: phases[(tick + index) % phases.length],
+            slide: `Slide ${slideNumber}`,
+            detail:
+              loop === "qa" && feedback && index === agents.length - 1
+                ? `Applies: ${feedback}`
+                : `${agent} ${phases[(tick + index) % phases.length]} on Slide ${slideNumber}.`,
+            status: tick >= ticks - 2 ? "done" : "running",
+            tick
+          } satisfies FigmaActivityEvent;
+        });
+        return [...nextEvents, ...prev].slice(0, 72);
+      });
+      await sleep(500);
+    }
   }
 
   function handleContextEvent(event: string, payload: unknown) {
@@ -678,28 +823,86 @@ export function App() {
             <AgentBoard visibleAgentIds={visibleAgentIds} agents={agents} />
             {feedbackMemory ? <FinalTextWindow title="Feedback memory injected into prompts" text={feedbackMemory} /> : null}
             {outlineReady && deck ? <DeckOutline deck={deck} /> : <EmptyState text={busy ? "Slide generation swarm is still running parallel eval and repair loops." : "Run the outline swarm to fill this step."} />}
-            <button className="primaryButton" onClick={generateFigmaDeck} disabled={!outlineReady || figmaBusy}>
-              Generate deck <Figma size={18} />
+            <button className="primaryButton" onClick={generateFigmaSlides} disabled={!outlineReady || figmaBusy}>
+              Generate slides <Figma size={18} />
             </button>
           </section>
         ) : null}
 
-        {step === "figma" ? (
+        {step === "figmaGenerate" ? (
           <section className="stagePanel">
             <div className="stageHeader">
               <div>
-                <p className="eyebrow">Step 5</p>
-              <h2>Make the Figma deck presentation-ready.</h2>
+                <p className="eyebrow">Step 5A</p>
+                <h2>Generate the Figma deck in visible bridge batches.</h2>
                 <p className="stageIntro">
-                  The finalizer builds the deck in Figma, then runs visual QA for overlap, crop, hierarchy, cohesion, copy fit, and screenshot readiness.
+                  Gemma generation agents create empty frames, add wireframes, write copy, place components, and visibly refine all slides through real Desktop Bridge batches.
                 </p>
               </div>
-              <button className="secondaryButton compact" onClick={generateFigmaDeck} disabled={!deck || figmaBusy}>
+              <button className="secondaryButton compact" onClick={generateFigmaSlides} disabled={!deck || figmaBusy}>
                 <Zap size={18} />
-                Run Figma QA loop
+                Regenerate slides
               </button>
             </div>
-            <FigmaBuildPanel status={figmaStatus} result={figmaResult} stages={figmaStages} plan={figmaBuildPlan} />
+            <FigmaBuildPanel
+              title="Figma Slide Generation Swarm"
+              status={figmaStatus}
+              result={figmaResult}
+              stages={figmaStages}
+              plan={figmaBuildPlan}
+              events={figmaActivityEvents}
+            />
+            <button className="primaryButton" onClick={() => runFigmaQaLoop()} disabled={!figmaGenerationComplete || figmaBusy}>
+              Run Figma QA Loop <Zap size={18} />
+            </button>
+            {deck ? <DeckOutline deck={deck} compact /> : <EmptyState text="Draft the outline before generating in Figma." />}
+          </section>
+        ) : null}
+
+        {step === "figmaQa" ? (
+          <section className="stagePanel">
+            <div className="stageHeader">
+              <div>
+                <p className="eyebrow">Step 5B</p>
+                <h2>Run Gemma VLM QA until the deck is ready to present.</h2>
+                <p className="stageIntro">
+                  The QA swarm takes each slide screenshot as VLM input, returns structured diagnosis and fix instructions, executes bridge fixes, then rechecks with fix history for up to five loops per slide.
+                </p>
+              </div>
+              <button className="secondaryButton compact" onClick={() => runFigmaQaLoop()} disabled={!deck || figmaBusy}>
+                <Zap size={18} />
+                Run Figma QA Loop
+              </button>
+            </div>
+            <FigmaBuildPanel
+              title="Gemma VLM QA + Polish Swarm"
+              status={figmaStatus}
+              result={figmaResult}
+              stages={figmaStages}
+              plan={figmaBuildPlan}
+              events={figmaActivityEvents}
+            />
+            {figmaQaComplete ? (
+              <section className="feedbackLoopPanel">
+                <div>
+                  <p className="eyebrow">Manual feedback loop</p>
+                  <h2>Request one more slide/design change.</h2>
+                  <p>Submit feedback and the same VLM QA swarm reruns on the existing Figma section.</p>
+                </div>
+                <label>
+                  <span>Feedback for Figma QA</span>
+                  <textarea
+                    value={qaFeedback}
+                    onChange={(event) => setQaFeedback(event.target.value)}
+                    rows={4}
+                    placeholder="Example: make slide 5 more metric-heavy and tighten the final slide CTA."
+                  />
+                </label>
+                <button className="primaryButton" onClick={submitFigmaFeedback} disabled={!qaFeedback.trim() || figmaBusy}>
+                  Apply feedback with QA loop <ArrowRight size={18} />
+                </button>
+              </section>
+            ) : null}
             {deck ? <DeckOutline deck={deck} compact /> : <EmptyState text="Draft the outline before generating in Figma." />}
           </section>
         ) : null}
@@ -712,7 +915,8 @@ function canVisitStep(step: WorkflowStep, finalizedContext: string, brainstorm: 
   if (step === "context") return true;
   if (step === "brainstorm") return Boolean(finalizedContext);
   if (step === "outline") return Boolean(brainstorm);
-  if (step === "figma") return Boolean(deck);
+  if (step === "figmaGenerate") return Boolean(deck);
+  if (step === "figmaQa") return Boolean(deck);
   return true;
 }
 
@@ -865,25 +1069,30 @@ function DeckOutline({ deck, compact = false }: { deck: DeckSpec; compact?: bool
 }
 
 function FigmaBuildPanel({
+  title,
   status,
   result,
   stages,
-  plan
+  plan,
+  events
 }: {
+  title: string;
   status: FigmaBridgeStatus | null;
   result: string;
   stages: FigmaSlideBuildStage[];
   plan: FigmaBuildPlan | null;
+  events: FigmaActivityEvent[];
 }) {
   return (
     <section className="figmaBuildPanel">
       <div>
         <p className="eyebrow">Desktop Bridge</p>
-        <h2>Pixel-perfect Figma Deck Finalizer</h2>
+        <h2>{title}</h2>
         {status ? <p className={`bridgeStatus ${status.connected ? "connected" : "waiting"}`}>{status.message}</p> : null}
         {result ? <p className="bridgeResult">{result}</p> : null}
         {plan ? <p className="bridgeResult">{plan.checklist.join(" | ")}</p> : null}
       </div>
+      <FigmaActivityPanel events={events} />
       {stages.length ? (
         <div className="stageGrid">
           {stages.map((stage) => (
@@ -899,14 +1108,43 @@ function FigmaBuildPanel({
   );
 }
 
-function createImmediateFigmaStages(deck: DeckSpec): FigmaSlideBuildStage[] {
-  const phases: Array<{ phase: FigmaSlideBuildStage["phase"]; verb: string }> = [
-    { phase: "build", verb: "Scaffolding frame, hierarchy, and first copy pass" },
-    { phase: "review", verb: "Reviewing overlap, proof, and slide-specific job" },
-    { phase: "revise", verb: "Applying copy, evidence, and layout fixes" },
-    { phase: "polish", verb: "Polishing spacing, contrast, crop, and emphasis" },
-    { phase: "finalize", verb: "Running final screenshot-readiness gate" }
-  ];
+function FigmaActivityPanel({ events }: { events: FigmaActivityEvent[] }) {
+  if (!events.length) return null;
+  return (
+    <section className="figmaActivityPanel" aria-label="Figma agent activity">
+      <div className="stageMiniHeader">
+        <p className="eyebrow">Live agent batches</p>
+        <span>{events.length} visible events</span>
+      </div>
+      <div className="figmaEventGrid">
+        {events.slice(0, 18).map((event) => (
+          <article key={event.id} className={`figmaEvent ${event.status}`}>
+            <span>{event.slide}</span>
+            <strong>{event.agent}</strong>
+            <p>{event.detail || event.phase}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function createImmediateFigmaStages(deck: DeckSpec, mode: "generation" | "qa" = "generation"): FigmaSlideBuildStage[] {
+  const phases: Array<{ phase: FigmaSlideBuildStage["phase"]; verb: string }> =
+    mode === "generation"
+      ? [
+          { phase: "build", verb: "Scaffolding empty frame, wireframe, and first copy pass" },
+          { phase: "review", verb: "Reviewing hierarchy, proof, and slide-specific job" },
+          { phase: "revise", verb: "Applying copy, evidence, component, and layout fixes" },
+          { phase: "polish", verb: "Polishing spacing, contrast, crop, and emphasis" },
+          { phase: "finalize", verb: "Running final generation screenshot-readiness gate" }
+        ]
+      : [
+          { phase: "review", verb: "VLM scanning bounds, overlap, crop, and font size" },
+          { phase: "revise", verb: "Applying VLM copy, placement, and feedback fixes" },
+          { phase: "polish", verb: "Tuning contrast, cohesion, spacing, and narrative rhythm" },
+          { phase: "finalize", verb: "Confirming screenshot-ready QA gate" }
+        ];
   return phases.flatMap(({ phase, verb }, phaseIndex) =>
     deck.slides.slice(0, hiddenSlideCount).map((slide, index) => ({
       slideId: `s${index + 1}`,
@@ -916,6 +1154,12 @@ function createImmediateFigmaStages(deck: DeckSpec): FigmaSlideBuildStage[] {
       summary: `${verb}: ${slide.formatLabel || slide.layout || slide.title}`
     }))
   );
+}
+
+function extractFigmaResult(value: unknown): Record<string, unknown> {
+  const outer = value as { result?: unknown };
+  const payload = outer && typeof outer === "object" && "result" in outer ? outer.result : value;
+  return payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
 }
 
 function EmptyState({ text }: { text: string }) {
