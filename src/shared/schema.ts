@@ -162,6 +162,21 @@ export interface BrainstormResponse {
   questions: string[];
   sharperAngle: string;
   assumptions: string[];
+  agentDrafts?: SwarmTextDraft[];
+  finalBrief?: string;
+  keyMessages?: string[];
+  audience?: string;
+}
+
+export interface SwarmTextDraft {
+  agentId: string;
+  label: string;
+  angle: string;
+  draft: string;
+  diagnosis?: string;
+  revision?: string;
+  status: "running" | "done" | "error";
+  elapsedMs?: number;
 }
 
 export interface ApiErrorShape {

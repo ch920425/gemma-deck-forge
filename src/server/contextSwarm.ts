@@ -27,8 +27,8 @@ export interface ContextLaneResult {
 export type ContextSwarmSend = (event: string, payload: unknown) => void;
 
 const laneLabels: Record<ContextLaneId, string> = {
-  gbrain: "Supabase gbrain",
-  obsidian: "Obsidian vault",
+  gbrain: "KB retrieval",
+  obsidian: "Obsidian CLI",
   gemma: "Gemma organizer",
   brief: "Local context brief"
 };
@@ -42,13 +42,13 @@ export async function runContextSwarm(input: ContextSwarmInput, send: ContextSwa
     runLane("brief", send, () => runBriefLane(normalized))
   ];
   const results = await Promise.all(tasks);
-  send("context_complete", {
+    send("context_complete", {
     ok: results.some((result) => result.ok),
     laneCount: results.length,
     hitCount: results.flatMap((result) => result.hits).length,
     hits: results.flatMap((result) => result.hits).slice(0, 12),
     context: buildContextDigest(results),
-    lanes: results
+    lanes: results.map(publicLaneResult)
   });
   return results;
 }
@@ -71,12 +71,16 @@ export async function runObsidianVaultSearch(
     };
   }
 
+  const cliResult = await runCommand("obsidian", ["search", query, vaultPath], 1800);
   const pattern = buildObsidianSearchPattern(query);
-  const result = await runCommand(
-    "rg",
-    ["--with-filename", "--line-number", "--no-heading", "-i", "-m", "2", pattern, vaultPath],
-    2200
-  );
+  const result =
+    cliResult.code === 0 && cliResult.stdout.trim()
+      ? cliResult
+      : await runCommand(
+          "rg",
+          ["--with-filename", "--line-number", "--no-heading", "-i", "-m", "2", pattern, vaultPath, "--glob", "*.md"],
+          2200
+        );
   if (result.code !== 0 && !result.stdout.trim()) {
     return {
       laneId: "obsidian",
@@ -99,7 +103,7 @@ export async function runObsidianVaultSearch(
       ? `Found ${hits.length} local note excerpts to ground the deck.`
       : "Obsidian scan completed, but no usable excerpts were found.",
     hits,
-    raw: result.stdout,
+    raw: (cliResult.stdout.trim() ? `obsidian search\n${result.stdout}` : result.stdout).slice(0, 12_000),
     elapsedMs: elapsed(started)
   };
 }
@@ -134,7 +138,7 @@ async function runLane(
   const timers = scheduleLaneProgress(laneId, label, send);
   try {
     const result = await task();
-    send("context_lane_complete", result);
+    send("context_lane_complete", publicLaneResult(result));
     return result;
   } catch (error) {
     const result: ContextLaneResult = {
@@ -275,7 +279,12 @@ function normalizeContextInput(input: ContextSwarmInput): Required<ContextSwarmI
 }
 
 function getObsidianVaultPath(): string {
-  return process.env.OBSIDIAN_VAULT_PATH || "/Users/chaseungjae/Vaults/obsidian";
+  const candidates = [
+    process.env.OBSIDIAN_VAULT_PATH,
+    "/Users/chaseungjae/Desktop/projects/obsidian",
+    "/Users/chaseungjae/Vaults/obsidian"
+  ].filter(Boolean) as string[];
+  return candidates.find((candidate) => existsSync(candidate)) || candidates[0] || "";
 }
 
 function scheduleLaneProgress(laneId: ContextLaneId, label: string, send: ContextSwarmSend): NodeJS.Timeout[] {
@@ -314,6 +323,14 @@ function contextHit(source: string, title: string, excerpt: string): GbrainHit {
 
 function cleanExcerpt(value: string): string {
   return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, 1200);
+}
+
+function publicLaneResult(result: ContextLaneResult): ContextLaneResult {
+  return {
+    ...result,
+    hits: result.hits.slice(0, 8),
+    raw: result.raw ? result.raw.slice(0, 4000) : undefined
+  };
 }
 
 function escapeRegExp(value: string): string {

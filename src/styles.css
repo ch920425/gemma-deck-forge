@@ -63,6 +63,15 @@ button:disabled {
   font-weight: 700;
 }
 
+.productKicker {
+  max-width: 980px;
+  color: #0e7c66;
+}
+
+.productKicker strong {
+  color: #17211d;
+}
+
 .statusPills {
   display: flex;
   flex-wrap: wrap;
@@ -86,29 +95,11 @@ button:disabled {
   font-weight: 700;
 }
 
-.workspace {
-  display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr) minmax(280px, 360px);
-  gap: 14px;
-  align-items: start;
-}
-
-.controlPanel,
 .mainPanel,
-.artifactPanel,
 .feedbackPanel {
   border: 1px solid #d8d0bf;
   border-radius: 8px;
   background: #fffdf7;
-}
-
-.controlPanel,
-.artifactPanel {
-  position: sticky;
-  top: 16px;
-  max-height: calc(100vh - 32px);
-  overflow: auto;
-  padding: 14px;
 }
 
 .mainPanel {
@@ -569,8 +560,7 @@ textarea {
   gap: 10px;
 }
 
-.feedbackPanel pre,
-.artifactPanel pre {
+.feedbackPanel pre {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -601,15 +591,183 @@ textarea {
   margin: 10px 0 0;
 }
 
+.stagedShell {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stepper button {
+  display: grid;
+  gap: 5px;
+  min-height: 78px;
+  border: 1px solid #d8d0bf;
+  border-radius: 8px;
+  background: #fffdf7;
+  color: #3d4b43;
+  padding: 12px;
+  text-align: left;
+}
+
+.stepper button.active {
+  border-color: #0e7c66;
+  background: #e7f2ee;
+  color: #17211d;
+}
+
+.stepper strong {
+  font-size: 15px;
+}
+
+.stepper span {
+  color: #69756d;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.stageBoard {
+  display: grid;
+  min-height: calc(100vh - 190px);
+}
+
+.stagePanel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #d8d0bf;
+  border-radius: 8px;
+  background: #fffdf7;
+  padding: 18px;
+}
+
+.heroStage {
+  align-content: start;
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 28px;
+}
+
+.stagePanel h2 {
+  margin: 0;
+  max-width: 980px;
+  font-size: clamp(28px, 4vw, 52px);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.stageIntro {
+  max-width: 820px;
+  margin: 10px 0 0;
+  color: #53625a;
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.stageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.secondaryButton.compact {
+  width: auto;
+  min-width: 230px;
+  margin: 0;
+  padding: 0 16px;
+}
+
+.stageMiniHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.stageMiniHeader .eyebrow {
+  margin: 0;
+}
+
+.stageMiniHeader > span {
+  border-radius: 999px;
+  background: #17211d;
+  color: #ffffff;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.swarmDraftPanel,
+.finalTextWindow {
+  border: 1px solid #d8d0bf;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.swarmDraftGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.swarmDraftGrid .agentLane {
+  min-height: 185px;
+}
+
+.finalTextWindow pre {
+  max-height: 250px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  background: #17211d;
+  color: #eef5ef;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.finalTextWindow.dynamic pre {
+  min-height: 220px;
+  max-height: 440px;
+}
+
+.slideGrid.compact {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.slideGrid.compact .slideCard {
+  min-height: 230px;
+}
+
+.slideGrid.compact .slideCard h3 {
+  font-size: 18px;
+  max-width: 100%;
+}
+
 @media (max-width: 1180px) {
-  .workspace {
-    grid-template-columns: 1fr;
+  .stepper,
+  .swarmDraftGrid,
+  .slideGrid.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .controlPanel,
-  .artifactPanel {
-    position: static;
-    max-height: none;
+  .stageHeader {
+    display: grid;
+  }
+
+  .secondaryButton.compact {
+    width: 100%;
   }
 }
 
@@ -628,8 +786,10 @@ textarea {
   .evidenceTray,
   .slideGrid,
   .feedbackGrid,
-  .stageGrid,
-  .row {
+    .stageGrid,
+    .stepper,
+    .swarmDraftGrid,
+    .row {
     grid-template-columns: 1fr;
   }
 

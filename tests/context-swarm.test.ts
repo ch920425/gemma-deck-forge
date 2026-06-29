@@ -153,7 +153,7 @@ describe("context swarm helpers", () => {
       },
       {
         laneId: "obsidian",
-        label: "Obsidian vault",
+        label: "Obsidian CLI",
         ok: true,
         summary: "Found notes",
         elapsedMs: 20,
@@ -162,7 +162,7 @@ describe("context swarm helpers", () => {
     ];
     const digest = buildContextDigest(results);
     expect(digest).toContain("Local context brief");
-    expect(digest).toContain("Obsidian vault");
+    expect(digest).toContain("Obsidian CLI");
     expect(digest).toContain("Make querying feel parallel.");
   });
 });

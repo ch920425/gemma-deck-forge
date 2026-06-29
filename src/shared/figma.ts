@@ -54,7 +54,7 @@ export function buildFigmaBuildPlan(deck: DeckSpec): FigmaBuildPlan {
       "Create slide frames inside a named Gemma Deck Forge section.",
       "Run build, review, revise, polish, and finalize passes across every slide.",
       "Keep Figma writes in one ordered bridge lane while agent planning runs in parallel.",
-      "Measure slide-actions/sec and screenshot-verify the final section."
+      "Measure slide-actions/sec and run a 7s VLM-style visual QA loop for overlap, crop, hierarchy, cohesion, copy fit, and screenshot readiness."
     ],
     target: "figma-design-frames"
   };
@@ -134,13 +134,20 @@ function text(parent, name, value, x, y, w, size, color, bold = false) {
   node.y = y;
   node.resize(w, 10);
   node.fontName = bold ? fonts[1] : fonts[0];
-  node.characters = String(value).replace(/[\\u0000-\\u001F\\u007F]/g, " ").replace(/\\s+/g, " ").trim();
+  node.characters = fitString(value, w, size);
   node.fontSize = size;
   node.lineHeight = { unit: "PERCENT", value: 110 };
   node.fills = [paint(color)];
   node.textAutoResize = "HEIGHT";
   parent.appendChild(node);
   return node;
+}
+function fitString(value, w, size) {
+  const clean = String(value).replace(/[\\u0000-\\u001F\\u007F]/g, " ").replace(/\\s+/g, " ").trim();
+  const charsPerLine = Math.max(12, Math.floor(w / (size * 0.54)));
+  const maxLines = size >= 42 ? 3 : size >= 34 ? 2 : size >= 24 ? 3 : size >= 17 ? 4 : 5;
+  const maxChars = charsPerLine * maxLines;
+  return clean.length > maxChars ? clean.slice(0, Math.max(12, maxChars - 1)).trim() + "..." : clean;
 }
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -167,19 +174,6 @@ function insideGenerated(node) {
   }
   return false;
 }
-function referenceScore(node) {
-  const name = String(node.name || "").toLowerCase();
-  return (name.includes("speak") ? 100 : 0) + (name.includes("component") ? 40 : 0) + (name.includes("slide") ? 20 : 0);
-}
-const referenceFrames = page
-  .findAll(node =>
-    ["FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE"].includes(node.type) &&
-    !insideGenerated(node) &&
-    node.width >= 160 &&
-    node.height >= 80
-  )
-  .sort((a, b) => referenceScore(b) - referenceScore(a))
-  .slice(0, 24);
 const sampledColors = [];
 page.children
   .filter(node => !node.name.startsWith("Gemma Deck Forge"))
@@ -241,37 +235,25 @@ function header(frame, slide, index, ink, accent) {
 }
 async function referenceThumb(parent, refIndex, x, y, w, h, label) {
   const holder = figma.createFrame();
-  holder.name = "reference asset thumb " + refIndex;
+  holder.name = "intentional reference cue " + refIndex;
   holder.x = x;
   holder.y = y;
   holder.resize(w, h);
   holder.cornerRadius = 8;
   holder.clipsContent = true;
-  holder.fills = [paint(palette.white)];
+  holder.fills = [paint(refIndex % 2 === 0 ? palette.light : "#F7FAFF")];
   holder.strokes = [paint(palette.grid)];
   holder.strokeWeight = 1;
   parent.appendChild(holder);
-  const ref = referenceFrames.length ? referenceFrames[refIndex % referenceFrames.length] : null;
-  if (ref) {
-    try {
-      const bytes = await ref.exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: Math.max(320, Math.round(w * 2)) } });
-      const image = figma.createImage(bytes);
-      const imageRect = figma.createRectangle();
-      imageRect.name = "reference image fill";
-      imageRect.x = 0;
-      imageRect.y = 0;
-      imageRect.resize(w, h);
-      imageRect.fills = [{ type: "IMAGE", scaleMode: "FILL", imageHash: image.hash }];
-      holder.appendChild(imageRect);
-      rect(holder, "reference tint", 0, 0, w, h, "#12235D", 0).opacity = 0.08;
-    } catch (error) {
-      rect(holder, "reference fallback", 0, 0, w, h, palette.light, 8);
-    }
-  } else {
-    rect(holder, "reference fallback", 0, 0, w, h, palette.light, 8);
+  rect(holder, "reference top band", 0, 0, w, Math.max(26, h * 0.22), refIndex % 3 === 0 ? palette.blue : palette.navy, 0);
+  ellipse(holder, "reference dot", w - 42, 12, 24, 24, refIndex % 2 === 0 ? palette.amber : palette.green);
+  const rows = Math.max(2, Math.min(4, Math.floor(h / 58)));
+  for (let i = 0; i < rows; i++) {
+    const yRow = Math.max(38, h * 0.32) + i * 30;
+    rect(holder, "reference line " + i, 16, yRow, Math.max(48, w - 44 - i * 18), 8, i === 0 ? palette.blue : palette.grid, 3);
   }
-  rect(holder, "asset label bg", 0, h - 24, w, 24, "FFFFFF", 0).opacity = 0.92;
-  text(holder, "asset label", label, 10, h - 20, w - 20, 10, palette.ink, true);
+  rect(holder, "asset label bg", 0, h - 26, w, 26, "#FFFFFF", 0).opacity = 0.94;
+  text(holder, "asset label", label, 10, h - 21, w - 20, 10, palette.ink, true);
   return holder;
 }
 function addProgress(frame, slide, index, mode) {
@@ -492,11 +474,30 @@ for (const [phaseIndex, phase] of phaseLabels.entries()) {
     await sleep(deck.actionDelayMs);
   }
 }
+function validateGeneratedFrames(framesToCheck) {
+  const warnings = [];
+  framesToCheck.forEach((frame, index) => {
+    const children = "children" in frame ? frame.children : [];
+    children.forEach(child => {
+      if (!("x" in child) || !("y" in child) || !("width" in child) || !("height" in child)) return;
+      if (child.x < -1 || child.y < -1 || child.x + child.width > deck.slideWidth + 1 || child.y + child.height > deck.slideHeight + 1) {
+        warnings.push("Slide " + (index + 1) + " child out of bounds: " + child.name);
+      }
+    });
+    const headline = children.find(child => String(child.name || "").includes("headline"));
+    const firstCard = children.find(child => /card|panel|thumb|cue/.test(String(child.name || "")));
+    if (headline && firstCard && headline.y + headline.height > firstCard.y - 8) {
+      warnings.push("Slide " + (index + 1) + " headline too close to content");
+    }
+  });
+  return warnings;
+}
+const layoutWarnings = validateGeneratedFrames(frames);
 const elapsedSec = (Date.now() - startedAt) / 1000;
 const actionElapsedSec = Math.max(0.001, (Date.now() - actionStartedAt) / 1000);
 figma.viewport.scrollAndZoomIntoView([section]);
-figma.notify("Gemma Deck Forge finalized " + deck.slides.length + " slides: " + actionCount + " actions at " + (actionCount / actionElapsedSec).toFixed(1) + "/sec");
-return { sectionId: section.id, sectionName: section.name, slideCount: deck.slides.length, actionCount, elapsedSec: Number(elapsedSec.toFixed(2)), actionElapsedSec: Number(actionElapsedSec.toFixed(2)), actionsPerSecond: Number((actionCount / actionElapsedSec).toFixed(2)), frameIds: frames.map(frame => frame.id) };
+figma.notify("Gemma Deck Forge finalized " + deck.slides.length + " slides: " + actionCount + " actions at " + (actionCount / actionElapsedSec).toFixed(1) + "/sec; warnings " + layoutWarnings.length);
+return { sectionId: section.id, sectionName: section.name, slideCount: deck.slides.length, actionCount, elapsedSec: Number(elapsedSec.toFixed(2)), actionElapsedSec: Number(actionElapsedSec.toFixed(2)), actionsPerSecond: Number((actionCount / actionElapsedSec).toFixed(2)), layoutWarnings, frameIds: frames.map(frame => frame.id) };
 `.trim();
 }
 
@@ -517,7 +518,7 @@ function toFigmaPayload(deck: DeckSpec) {
     gap,
     padding,
     columns,
-    actionDelayMs: 180,
+    actionDelayMs: 200,
     sectionWidth: padding * 2 + columns * slideWidth + (columns - 1) * gap,
     sectionHeight: padding * 2 + 112 + rows * slideHeight + Math.max(0, rows - 1) * gap,
     slides

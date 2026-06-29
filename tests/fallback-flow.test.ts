@@ -12,6 +12,7 @@ import {
 } from "../src/server/cerebras";
 import { generateDeck, polishDeck, runOutlineDesignSwarm, summariseOutlinePayload, synthesizeDeck } from "../src/server/deck";
 import { runGbrainQuery } from "../src/server/gbrain";
+import { runBrainstormSwarm, runContextWritingSwarm } from "../src/server/textSwarms";
 import { buildAgentUserPrompt, buildBrainstormPrompt, buildSynthesisPrompt } from "../src/shared/prompts";
 import type { AgentFinding, GenerateRequest } from "../src/shared/schema";
 
@@ -85,6 +86,48 @@ describe("Cerebras helpers without configured keys", () => {
 });
 
 describe("fallback generation flow", () => {
+  it("runs the context writer swarm with five real agent lanes and hidden recipient constraints", async () => {
+    const events: string[] = [];
+    const audience = "Cerebras x Gemma hackathon judges and enterprise AI buyers";
+    const result = await runContextWritingSwarm(
+      {
+        idea: input.idea,
+        context: "## Evidence\n- Cerebras low latency makes agent loops visible.\n- Figma bridge can render ordered slide actions.",
+        audience
+      },
+      (event) => events.push(event)
+    );
+    expect(result.drafts).toHaveLength(5);
+    expect(events.filter((event) => event === "context_writer_agent_started")).toHaveLength(5);
+    expect(events.filter((event) => event === "context_writer_agent_complete")).toHaveLength(5);
+    expect(events).toContain("context_writer_complete");
+    expect(result.finalText).toContain("Finalized Context Brief");
+    expect(result.finalText).toContain("Cerebras low latency");
+    expect(result.finalText).not.toContain(`Audience: ${audience}`);
+  });
+
+  it("runs the brainstorm swarm with five angles and keeps recipient values out of visible brief text", async () => {
+    const events: string[] = [];
+    const audience = "Cerebras x Gemma hackathon judges and enterprise AI buyers";
+    const result = await runBrainstormSwarm(
+      {
+        idea: input.idea,
+        context: input.gbrainContext,
+        audience
+      },
+      (event) => events.push(event)
+    );
+    expect(result.agentDrafts).toHaveLength(5);
+    expect(result.keyMessages).toHaveLength(3);
+    expect(result.audience).toBe(audience);
+    expect(events.filter((event) => event === "brainstorm_agent_started")).toHaveLength(5);
+    expect(events.filter((event) => event === "brainstorm_agent_complete")).toHaveLength(5);
+    expect(events).toContain("brainstorm_complete");
+    expect(result.finalBrief).toContain("Brainstorm Final Brief");
+    expect(result.finalBrief).not.toContain(`Audience: ${audience}`);
+    expect(result.assumptions.join(" ")).not.toContain(audience);
+  });
+
   it("generates a complete deck through real fallback paths and stream events", async () => {
     const events: string[] = [];
     const deck = await generateDeck(input, (event) => events.push(event));

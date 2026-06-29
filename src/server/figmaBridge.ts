@@ -4,7 +4,7 @@ import type { Socket } from "node:net";
 import type { FigmaBridgeStatus } from "../shared/schema";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const DEFAULT_PORT_RANGE = Array.from({ length: 10 }, (_, index) => 9223 + index).reverse();
+const DEFAULT_PORT_RANGE = Array.from({ length: 10 }, (_, index) => 9223 + index);
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -22,6 +22,7 @@ interface ConnectedFile {
 
 interface FigmaBridgeOptions {
   preferredPort?: number;
+  fallbackPorts?: number[];
   host?: string;
 }
 
@@ -41,10 +42,12 @@ export class FigmaBridgeServer {
   private frameBuffer = Buffer.alloc(0);
   private readonly host: string;
   private readonly preferredPort?: number;
+  private readonly fallbackPorts?: number[];
 
   constructor(options: FigmaBridgeOptions = {}) {
     this.host = options.host || "localhost";
     this.preferredPort = options.preferredPort;
+    this.fallbackPorts = options.fallbackPorts;
   }
 
   async start(): Promise<void> {
@@ -121,8 +124,9 @@ export class FigmaBridgeServer {
   }
 
   private async startOnAvailablePort(): Promise<void> {
-    const ports = this.preferredPort
-      ? [this.preferredPort, ...DEFAULT_PORT_RANGE.filter((port) => port !== this.preferredPort)]
+    const fallbackPorts = this.fallbackPorts || DEFAULT_PORT_RANGE;
+    const ports = this.preferredPort !== undefined
+      ? [this.preferredPort, ...fallbackPorts.filter((port) => port !== this.preferredPort)]
       : DEFAULT_PORT_RANGE;
 
     let lastError: unknown;

@@ -186,7 +186,7 @@ describe("Figma Desktop Bridge server", () => {
     const address = blocker.address();
     const occupiedPort = typeof address === "object" && address ? address.port : 0;
 
-    server = new FigmaBridgeServer({ preferredPort: occupiedPort });
+    server = new FigmaBridgeServer({ preferredPort: occupiedPort, fallbackPorts: [0] });
     await server.start();
     expect(server.status().serverRunning).toBe(true);
     expect(server.status().port).not.toBe(occupiedPort);
