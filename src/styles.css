@@ -1,0 +1,438 @@
+:root {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #17211d;
+  background: #f7f4ec;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.shell {
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.topbar h1,
+.deckHeader h2 {
+  margin: 0;
+  font-size: clamp(30px, 4vw, 52px);
+  line-height: 0.98;
+  letter-spacing: 0;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: #69756d;
+  font-weight: 700;
+}
+
+.statusPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.statusPills span,
+.metrics span,
+.layout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid #d8d0bf;
+  border-radius: 999px;
+  background: #fffdf7;
+  color: #2b3b34;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr) minmax(280px, 360px);
+  gap: 14px;
+  align-items: start;
+}
+
+.controlPanel,
+.mainPanel,
+.artifactPanel,
+.feedbackPanel {
+  border: 1px solid #d8d0bf;
+  border-radius: 8px;
+  background: #fffdf7;
+}
+
+.controlPanel,
+.artifactPanel {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 14px;
+}
+
+.mainPanel {
+  padding: 14px;
+  min-height: calc(100vh - 120px);
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+label span,
+.artifactHeader,
+.laneHeader {
+  font-size: 12px;
+  font-weight: 800;
+  color: #3d4b43;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #cfc6b4;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17211d;
+  padding: 10px 11px;
+  outline-color: #0e7c66;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.primaryButton,
+.secondaryButton,
+.iconButton,
+.tinyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  border-radius: 8px;
+  font-weight: 800;
+}
+
+.primaryButton {
+  width: 100%;
+  background: #0e7c66;
+  color: white;
+}
+
+.secondaryButton,
+.iconButton,
+.tinyButton {
+  background: #17211d;
+  color: #ffffff;
+}
+
+.secondaryButton {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.fieldStatus {
+  min-height: 20px;
+  margin: -6px 0 12px;
+  color: #69756d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tinyButton {
+  min-height: 30px;
+  width: 34px;
+}
+
+.actionStack {
+  display: grid;
+  gap: 10px;
+}
+
+.agentBoard {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agentLane {
+  min-height: 150px;
+  border: 1px solid #d8d0bf;
+  border-top: 4px solid #cfc6b4;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.agentLane.running {
+  border-top-color: #2d6cdf;
+}
+
+.agentLane.done {
+  border-top-color: #0e7c66;
+}
+
+.agentLane.error {
+  border-top-color: #d95d39;
+}
+
+.laneHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.agentLane p {
+  margin: 14px 0;
+  color: #3d4b43;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.strip,
+.evidenceTray,
+.deckHeader,
+.emptyState,
+.feedbackPanel {
+  margin-top: 12px;
+}
+
+.strip {
+  display: grid;
+  gap: 6px;
+  border-left: 5px solid #e0a928;
+  padding: 12px;
+  background: #fff7dd;
+  border-radius: 8px;
+}
+
+.evidenceTray {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.evidenceTray article {
+  border: 1px solid #d8d0bf;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafafa;
+}
+
+.evidenceTray p {
+  max-height: 96px;
+  overflow: hidden;
+  color: #4d5a53;
+  font-size: 13px;
+}
+
+.deckHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  border-top: 1px solid #d8d0bf;
+  padding-top: 14px;
+}
+
+.deckHeader p {
+  max-width: 780px;
+  color: #3d4b43;
+}
+
+.slideGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.slideCard {
+  position: relative;
+  min-height: 310px;
+  border: 1px solid #d8d0bf;
+  border-top: 6px solid #0e7c66;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 18px;
+}
+
+.slideNumber {
+  position: absolute;
+  right: 14px;
+  top: 12px;
+  font-weight: 900;
+  color: #c5bba8;
+}
+
+.slideCard h3 {
+  margin: 20px 0 10px;
+  max-width: 82%;
+  font-size: 23px;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.slideCard p,
+.slideCard li {
+  color: #3d4b43;
+  line-height: 1.42;
+}
+
+.slideCard ul {
+  padding-left: 18px;
+}
+
+.visual {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border-top: 1px solid #ece4d5;
+  padding-top: 12px;
+  color: #0e7c66;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.feedbackPanel {
+  padding: 14px;
+}
+
+.feedbackPanel h2 {
+  margin: 0 0 12px;
+}
+
+.feedbackGrid {
+  display: grid;
+  grid-template-columns: 80px 1fr 1fr;
+  gap: 10px;
+}
+
+.feedbackPanel pre,
+.artifactPanel pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  background: #17211d;
+  color: #eef5ef;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.artifactHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.emptyState {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  color: #5b6861;
+  text-align: center;
+}
+
+.emptyState h2 {
+  margin: 10px 0 0;
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .controlPanel,
+  .artifactPanel {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .shell {
+    padding: 12px;
+  }
+
+  .topbar,
+  .deckHeader {
+    display: grid;
+  }
+
+  .agentBoard,
+  .evidenceTray,
+  .slideGrid,
+  .feedbackGrid,
+  .row {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar h1,
+  .deckHeader h2 {
+    font-size: 34px;
+  }
+}
