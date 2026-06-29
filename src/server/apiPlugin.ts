@@ -644,10 +644,10 @@ async function runIndependentSlideQaLoop(
     );
     state.diagnoses.push(diagnosis);
     state.passFail = diagnosis.passFail;
-    state.passed = isSlideQaPassed(diagnosis);
+    state.passed = state.executions.length > 0 && isSlideQaPassed(diagnosis);
     if (state.passed) break;
 
-    const fixDiagnosis = diagnosis.figmaFixes.length ? diagnosis : withFallbackFix(diagnosis);
+    const fixDiagnosis = withSafetyNetFixes(diagnosis, loopIndex);
     const fixPayload = unwrapBridgeResult(
       await bridge.executeCode(
         buildFigmaQaBatchScript(
@@ -877,19 +877,31 @@ function isSlideQaPassed(diagnosis: SlideVisionDiagnosis): boolean {
   return diagnosis.passFail === "pass" && diagnosis.noMoreIssues && diagnosis.issues.length === 0 && diagnosis.confidence >= 0.75;
 }
 
-function withFallbackFix(diagnosis: SlideVisionDiagnosis): SlideVisionDiagnosis {
+function withSafetyNetFixes(diagnosis: SlideVisionDiagnosis, loopIndex: number): SlideVisionDiagnosis {
+  const hasCleanLayoutFix = diagnosis.figmaFixes.some((fix) => {
+    if (!fix || typeof fix !== "object") return false;
+    const operation = String((fix as { operation?: unknown; op?: unknown }).operation || (fix as { op?: unknown }).op || "").toLowerCase();
+    return operation.includes("cleanfinallayout") || operation.includes("clean_final_layout") || operation.includes("rebuild");
+  });
+  const safetyFix =
+    !diagnosis.figmaFixes.length || !hasCleanLayoutFix || loopIndex === 0
+      ? [
+          {
+            operation: "cleanFinalLayout",
+            targetNodeName: diagnosis.slideId,
+            reason:
+              loopIndex === 0
+                ? "First visual QA fix always performs a deterministic safe-layout rebuild so generated badge/status artifacts and overlapping text are removed."
+                : "Safety-net cleanup runs when model fixes are absent or may not map to concrete Figma node names."
+          }
+        ]
+      : [];
   return {
     ...diagnosis,
     passFail: "fail",
     status: "fail",
     noMoreIssues: false,
-    figmaFixes: [
-      {
-        operation: "cleanFinalLayout",
-        targetNodeName: diagnosis.slideId,
-        reason: "Fallback repair when VLM returned fail without executable figmaFixes."
-      }
-    ]
+    figmaFixes: [...diagnosis.figmaFixes, ...safetyFix]
   };
 }
 

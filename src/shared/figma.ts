@@ -668,6 +668,10 @@ function allFixesForSlide(index) {
     return direct.concat(fallback);
   });
 }
+function isCleanLayoutFix(fix) {
+  const operation = String((fix && (fix.operation || fix.op)) || "").toLowerCase();
+  return operation.includes("cleanfinallayout") || operation.includes("clean_final_layout") || operation.includes("rebuild") || operation.includes("resetlayout");
+}
 function targetNode(frame, fix) {
   const rawName = String(fix.targetNodeName || fix.target || fix.nodeName || "").toLowerCase();
   if (!rawName) return null;
@@ -710,7 +714,14 @@ function applyOneFix(frame, fix) {
   return 1;
 }
 function applyVisionFixes(frame, index) {
-  return allFixesForSlide(index).reduce((count, fix) => count + applyOneFix(frame, fix), 0);
+  return allFixesForSlide(index).reduce((count, fix) => {
+    if (isCleanLayoutFix(fix)) {
+      const slide = input.slides[index] || input.slides[input.slides.length - 1] || {};
+      cleanFinalLayout(frame, slide, index);
+      return count + 1;
+    }
+    return count + applyOneFix(frame, fix);
+  }, 0);
 }
 function clampExistingNodes(frame) {
   let changed = 0;
