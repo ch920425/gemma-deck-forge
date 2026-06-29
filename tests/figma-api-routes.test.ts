@@ -310,7 +310,7 @@ function buildDeck(): DeckSpec {
       idea: "Figma bridge batching",
       audience: "Judges",
       brainstormNotes: "",
-      gbrainContext: "",
+      sourceContext: "",
       slideCount: 1
     }
   );

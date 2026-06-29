@@ -16,7 +16,7 @@ import { runContextSwarm } from "./contextSwarm";
 import { generateDeck, polishDeck } from "./deck";
 import { readFeedbackEntries, readFeedbackMemory, saveFeedback } from "./feedbackStore";
 import { detectEstablishedFigmaBridgePorts, getFigmaBridgeServer, type FigmaBridgeServer } from "./figmaBridge";
-import { runGbrainQuery } from "./gbrain";
+import { runKnowledgeQuery } from "./knowledge";
 import { runBrainstormSwarm, runContextWritingSwarm } from "./textSwarms";
 
 export function gemmaDeckApiPlugin(): Plugin {
@@ -59,9 +59,9 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/context/gbrain") {
+  if (req.method === "POST" && url.pathname === "/api/context/knowledge") {
     const body = (await readJson(req)) as { query?: string; limit?: number };
-    sendJson(res, 200, await runGbrainQuery(body.query || "", body.limit || 8));
+    sendJson(res, 200, await runKnowledgeQuery(body.query || "", body.limit || 8));
     return;
   }
 

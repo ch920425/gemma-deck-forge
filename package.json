@@ -1,8 +1,10 @@
 {
   "name": "gemma-deck-forge",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "bin": {
+    "gemma-deck-forge": "./bin/gemma-deck-forge.mjs"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -p tsconfig.json && vite build",
@@ -11,7 +13,10 @@
     "test:coverage": "vitest run --coverage",
     "test:live": "vitest run tests/live-cerebras.test.ts",
     "test:e2e": "playwright test",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "install:guide": "node ./bin/gemma-deck-forge.mjs install",
+    "setup:check": "node ./bin/gemma-deck-forge.mjs doctor",
+    "security:scan": "node ./bin/gemma-deck-forge.mjs scan"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

@@ -65,7 +65,7 @@ const contextGapAgents: TextAgent[] = [
     agentId: "context_followup_query",
     label: "Follow-up Query Writer",
     angle: "retrieval prompts",
-    system: "Write sharper Obsidian and gbrain retrieval prompts that fill the first-loop gaps."
+    system: "Write sharper local notes and knowledge retrieval prompts that fill the first-loop gaps."
   },
   {
     agentId: "context_proof_merger",
@@ -95,10 +95,10 @@ const brainstormAgents: TextAgent[] = [
     system: "Find the product wedge, user pain, workflow, and why this should exist now."
   },
   {
-    agentId: "brainstorm_demo",
-    label: "Demo Director",
-    angle: "60-second demo arc",
-    system: "Find the most cinematic demo sequence and what must be visible on screen."
+    agentId: "brainstorm_workflow",
+    label: "Workflow Director",
+    angle: "operator workflow arc",
+    system: "Find the clearest workflow sequence and the artifacts that must be inspectable at each step."
   },
   {
     agentId: "brainstorm_technical",
@@ -131,7 +131,7 @@ const brainstormReviewAgents: TextAgent[] = [
     agentId: "brainstorm_angle_editor",
     label: "Angle Editor",
     angle: "winning angle",
-    system: "Strengthen the product angle, judge relevance, and demo stakes without inventing proof."
+    system: "Strengthen the product angle, judge relevance, and workflow stakes without inventing proof."
   },
   {
     agentId: "brainstorm_design_mapper",
@@ -173,10 +173,10 @@ const brainstormFinalAgents: TextAgent[] = [
     system: "Tighten the language so headlines and body copy can be written from the brief."
   },
   {
-    agentId: "brainstorm_demo_final",
-    label: "Demo Finalizer",
-    angle: "video demo",
-    system: "Make the final brief optimize for a 60-second demo that visually shows agentic loops."
+    agentId: "brainstorm_workflow_final",
+    label: "Workflow Finalizer",
+    angle: "workflow clarity",
+    system: "Make the final brief optimize for a robust workflow that shows agentic loops and verifiable artifacts."
   },
   {
     agentId: "brainstorm_generation_gate",
@@ -196,7 +196,7 @@ export async function runContextWritingSwarm(
       loopIndex: 1,
       totalLoops: 2,
       label: "Context writing loop 1/2",
-      summary: "Five Gemma agents draft the first structured context artifact from retrieved KB and Obsidian evidence.",
+      summary: "Five Gemma agents draft the first structured context artifact from retrieved KB and local notes evidence.",
       agents: contextAgents,
       instruction: "Draft the first prompt-ready context artifact from source material."
     },
@@ -229,7 +229,7 @@ export async function runBrainstormSwarm(
       loopIndex: 1,
       totalLoops: 3,
       label: "Brainstorm loop 1/3",
-      summary: "Five Gemma agents create divergent product, demo, technical, judge, and narrative drafts.",
+      summary: "Five Gemma agents create divergent product, workflow, technical, judge, and narrative drafts.",
       agents: brainstormAgents,
       instruction: "Create strong divergent brainstorm artifacts from the idea and finalized context."
     },
@@ -415,10 +415,10 @@ function synthesizeBrainstorm(input: { idea: string; context: string; audience: 
     questions: [
       "What is the single before/after transformation the first slide must make obvious?",
       "Which retrieved proof should anchor the most credibility-sensitive slide?",
-      "What should the final Figma deck make a judge believe in under 10 seconds?"
+      "What should the final Figma deck make a reviewer understand immediately?"
     ],
     sharperAngle:
-      "A staged Gemma swarm turns raw idea, KB context, brainstormed strategy, and eval-fixed outline into a screenshot-ready Figma deck while the user watches each improvement loop.",
+      "A staged Gemma swarm turns raw idea, optional context, brainstormed strategy, and eval-fixed outline into a screenshot-ready Figma deck while the user watches each improvement loop.",
     assumptions: [
       "Recipient and deck-length constraints are hidden in the prompt, not rendered as fields.",
       "The deck remains fixed at the required varied slide set.",
@@ -429,7 +429,7 @@ function synthesizeBrainstorm(input: { idea: string; context: string; audience: 
     keyMessages: [
       "Context becomes structured deck proof.",
       "Five brainstorming agents create the meat of the slides.",
-      "Eval, diagnosis, edits, and Figma QA are visible timed loops."
+      "Eval, diagnosis, edits, and Figma QA are visible completion loops."
     ],
     audience: input.audience
   };

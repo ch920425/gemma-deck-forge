@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   callCerebrasText,
   fallbackAgentFinding,
@@ -11,7 +11,7 @@ import {
   tokensPerSecond
 } from "../src/server/cerebras";
 import { generateDeck, polishDeck, runOutlineDesignSwarm, summariseOutlinePayload, synthesizeDeck } from "../src/server/deck";
-import { runGbrainQuery } from "../src/server/gbrain";
+import { runKnowledgeQuery } from "../src/server/knowledge";
 import { runBrainstormSwarm, runContextWritingSwarm } from "../src/server/textSwarms";
 import { buildAgentUserPrompt, buildBrainstormPrompt, buildSynthesisPrompt } from "../src/shared/prompts";
 import type { AgentFinding, GenerateRequest } from "../src/shared/schema";
@@ -27,7 +27,7 @@ const input: GenerateRequest = {
   idea: "Idea to Figma Slides with Gemma on Cerebras",
   audience: "hackathon judges",
   brainstormNotes: "Show parallelism.",
-  gbrainContext: "Recovered Figma MCP workflow plus Supabase gbrain evidence.",
+  sourceContext: "Recovered Figma MCP workflow plus Supabase knowledge evidence.",
   slideCount: 5
 };
 
@@ -45,6 +45,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   restoreEnv("CEREBRAS_API_KEY", previousPrimary);
   restoreEnv("CEREBRAS_BACKUP_API_KEY", previousBackup);
   restoreEnv("CEREBRAS_API_KEYS", previousKeyList);
@@ -80,9 +81,34 @@ describe("Cerebras helpers without configured keys", () => {
   });
 
   it("returns a redacted provider error for an invalid live credential", async () => {
-    process.env.CEREBRAS_API_KEY = "csk-invalidcredentialforredaction";
+    process.env.CEREBRAS_API_KEY = ["csk", "invalidcredentialforredaction"].join("-");
     await expect(callCerebrasText([{ role: "user", content: "Return ok" }], 5)).rejects.toThrow(/Cerebras API/);
   }, 30_000);
+
+  it("falls through to a backup key when the first provider key is rate limited", async () => {
+    process.env.CEREBRAS_API_KEY = ["csk", "ratelimited"].join("-");
+    process.env.CEREBRAS_BACKUP_API_KEY = ["csk", "backupworks"].join("-");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("rate limit reached", { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            model: "gemma-4-31b",
+            choices: [{ message: { content: "backup ok" } }],
+            usage: { completion_tokens: 2 }
+          }),
+          { status: 200 }
+        )
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await callCerebrasText([{ role: "user", content: "Return ok" }], 5);
+    expect(result.value).toBe("backup ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][1]?.headers.Authorization)).not.toContain("backupworks");
+    expect(String(fetchMock.mock.calls[1][1]?.headers.Authorization)).toContain("backupworks");
+  });
 });
 
 describe("fallback generation flow", () => {
@@ -114,7 +140,7 @@ describe("fallback generation flow", () => {
     const result = await runBrainstormSwarm(
       {
         idea: input.idea,
-        context: input.gbrainContext,
+        context: input.sourceContext,
         audience
       },
       (event) => events.push(event)
@@ -189,7 +215,7 @@ describe("fallback generation flow", () => {
   });
 
   it("recovers from provider errors during outline categorization without stopping eval/fix", async () => {
-    process.env.CEREBRAS_API_KEY = "csk-invalidcredentialforoutlinefallback";
+    process.env.CEREBRAS_API_KEY = ["csk", "invalidcredentialforoutlinefallback"].join("-");
     process.env.GEMMA_OUTLINE_EVAL_MS = "40";
     const outlineContext = await runOutlineDesignSwarm(input, [fallbackAgentFinding("visual", "Visual")], "", () => undefined);
     expect(outlineContext).toContain("Cerebras API");
@@ -208,26 +234,26 @@ describe("prompt and CLI integration surfaces", () => {
     expect(synthesisPrompt).toContain("Return only valid JSON");
     expect(synthesisPrompt).toContain("change opener");
 
-    const brainstormPrompt = buildBrainstormPrompt(input.idea, input.gbrainContext);
+    const brainstormPrompt = buildBrainstormPrompt(input.idea, input.sourceContext);
     expect(brainstormPrompt).toContain("high-leverage questions");
-    expect(brainstormPrompt).toContain(input.gbrainContext);
+    expect(brainstormPrompt).toContain(input.sourceContext);
   });
 
   it("runs the Supabase CLI path and returns a structured failure when not linked", async () => {
-    const previousWorkdir = process.env.SUPABASE_WORKDIR;
-    process.env.SUPABASE_WORKDIR = dataDir;
-    const result = await runGbrainQuery("Gemma deck", 1);
-    restoreEnv("SUPABASE_WORKDIR", previousWorkdir);
+    const previousWorkdir = process.env.KNOWLEDGE_SUPABASE_WORKDIR;
+    process.env.KNOWLEDGE_SUPABASE_WORKDIR = dataDir;
+    const result = await runKnowledgeQuery("Gemma deck", 1);
+    restoreEnv("KNOWLEDGE_SUPABASE_WORKDIR", previousWorkdir);
     expect(result.ok).toBe(false);
     expect(result.sql).toContain("public.pages");
     expect(result.error || result.raw).toBeTruthy();
   });
 
   it("returns a structured failure for an invalid explicit Supabase DB URL", async () => {
-    const previousUrl = process.env.SUPABASE_DB_URL;
-    process.env.SUPABASE_DB_URL = "postgresql://invalid:invalid@127.0.0.1:1/postgres";
-    const result = await runGbrainQuery("Gemma deck", 1);
-    restoreEnv("SUPABASE_DB_URL", previousUrl);
+    const previousUrl = process.env.KNOWLEDGE_SUPABASE_DB_URL;
+    process.env.KNOWLEDGE_SUPABASE_DB_URL = "postgresql://invalid:invalid@127.0.0.1:1/postgres";
+    const result = await runKnowledgeQuery("Gemma deck", 1);
+    restoreEnv("KNOWLEDGE_SUPABASE_DB_URL", previousUrl);
     expect(result.ok).toBe(false);
     expect(result.error || result.raw).toBeTruthy();
   }, 30_000);

@@ -42,7 +42,7 @@ describe("deck normalization", () => {
       idea: "",
       audience: "",
       brainstormNotes: "",
-      gbrainContext: "",
+      sourceContext: "",
       slideCount: 12
     };
     const normalized = normalizeGenerateRequest(input);
@@ -60,14 +60,14 @@ describe("deck normalization", () => {
       idea: "  Build slides live  ",
       audience: "  impatient judges  ",
       brainstormNotes: "  stronger opener  ",
-      gbrainContext: "  source proof  ",
+      sourceContext: "  source proof  ",
       slideCount: 1
     });
     expect(normalized).toMatchObject({
       idea: "Build slides live",
       audience: "impatient judges",
       brainstormNotes: "stronger opener",
-      gbrainContext: "source proof",
+      sourceContext: "source proof",
       slideCount: 10
     });
   });
@@ -77,7 +77,7 @@ describe("deck normalization", () => {
     expect(slide.id).toBe("s3");
     expect(slide.layout).toBe("evidence");
     expect(slide.formatId).toBe("context-map");
-    expect(slide.visual).toContain("Speak");
+    expect(slide.visual).toContain("reference");
   });
 
   it("sanitizes unsafe slide fields into reliable defaults", () => {
@@ -111,7 +111,7 @@ describe("deck normalization", () => {
       idea: "Figma burst",
       audience: "judges",
       brainstormNotes: "",
-      gbrainContext: "",
+      sourceContext: "",
       slideCount: 3
     });
     const fallback = normalizeDeck(null, input);
@@ -197,7 +197,7 @@ describe("figma handoff", () => {
         idea: "x",
         audience: "y",
         brainstormNotes: "",
-        gbrainContext: "",
+        sourceContext: "",
         slideCount: 1
       }
     );
@@ -241,7 +241,7 @@ describe("figma handoff", () => {
         idea: "x",
         audience: "y",
         brainstormNotes: "",
-        gbrainContext: "",
+        sourceContext: "",
         slideCount: 1
       }
     );

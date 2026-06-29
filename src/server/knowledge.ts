@@ -1,16 +1,16 @@
 import { spawn } from "node:child_process";
-import type { GbrainHit } from "../shared/schema";
+import type { KnowledgeHit } from "../shared/schema";
 
-export interface GbrainQueryResult {
+export interface KnowledgeQueryResult {
   ok: boolean;
   query: string;
   sql: string;
-  hits: GbrainHit[];
+  hits: KnowledgeHit[];
   raw: string;
   error?: string;
 }
 
-export function buildGbrainSql(query: string, limit: number): string {
+export function buildKnowledgeSql(query: string, limit: number): string {
   const safeLimit = Math.min(Math.max(Number(limit) || 8, 1), 20);
   const q = sqlLiteral(query.trim() || "Gemma Cerebras slide deck");
   return `
@@ -39,15 +39,15 @@ limit ${safeLimit};
 `.trim();
 }
 
-export async function runGbrainQuery(query: string, limit = 8, timeoutMs = 20_000): Promise<GbrainQueryResult> {
-  const sql = buildGbrainSql(query, limit);
+export async function runKnowledgeQuery(query: string, limit = 8, timeoutMs = 20_000): Promise<KnowledgeQueryResult> {
+  const sql = buildKnowledgeSql(query, limit);
   const args = ["db", "query", "--output", "json"];
-  if (process.env.SUPABASE_DB_URL) {
-    args.push("--db-url", process.env.SUPABASE_DB_URL);
+  if (process.env.KNOWLEDGE_SUPABASE_DB_URL) {
+    args.push("--db-url", process.env.KNOWLEDGE_SUPABASE_DB_URL);
   } else {
     args.push("--linked");
   }
-  const workdir = process.env.SUPABASE_WORKDIR;
+  const workdir = process.env.KNOWLEDGE_SUPABASE_WORKDIR;
   if (workdir) {
     args.push("--workdir", workdir);
   }
@@ -75,7 +75,7 @@ export async function runGbrainQuery(query: string, limit = 8, timeoutMs = 20_00
   };
 }
 
-export function parseSupabaseRows(raw: string): GbrainHit[] {
+export function parseSupabaseRows(raw: string): KnowledgeHit[] {
   const trimmed = raw.trim();
   if (!trimmed) {
     return [];
@@ -83,12 +83,12 @@ export function parseSupabaseRows(raw: string): GbrainHit[] {
   try {
     const parsed = JSON.parse(extractJson(trimmed)) as unknown;
     if (Array.isArray(parsed)) {
-      return parsed.map(rowToHit).filter(Boolean) as GbrainHit[];
+      return parsed.map(rowToHit).filter(Boolean) as KnowledgeHit[];
     }
     if (parsed && typeof parsed === "object") {
       const rows = (parsed as { data?: unknown[]; rows?: unknown[] }).data || (parsed as { rows?: unknown[] }).rows;
       if (Array.isArray(rows)) {
-        return rows.map(rowToHit).filter(Boolean) as GbrainHit[];
+        return rows.map(rowToHit).filter(Boolean) as KnowledgeHit[];
       }
     }
   } catch {
@@ -105,7 +105,7 @@ function extractJson(raw: string): string {
   return start > 0 ? raw.slice(start) : raw;
 }
 
-function parseTableRows(raw: string): GbrainHit[] {
+function parseTableRows(raw: string): KnowledgeHit[] {
   return raw
     .split("\n")
     .filter((line) => line.includes("|") && !line.includes("---"))
@@ -122,7 +122,7 @@ function parseTableRows(raw: string): GbrainHit[] {
     .filter((hit) => hit.title && hit.excerpt);
 }
 
-function rowToHit(row: unknown): GbrainHit | null {
+function rowToHit(row: unknown): KnowledgeHit | null {
   if (!row || typeof row !== "object") {
     return null;
   }
@@ -133,7 +133,7 @@ function rowToHit(row: unknown): GbrainHit | null {
     return null;
   }
   return {
-    source: String(record.source || "gbrain"),
+    source: String(record.source || "knowledge"),
     title,
     excerpt,
     score: Number(record.score) || undefined,

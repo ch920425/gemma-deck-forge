@@ -57,7 +57,7 @@ export async function generateDeck(input: GenerateRequest, send?: StreamSend): P
 }
 
 export async function polishDeck(input: PolishRequest, send?: StreamSend): Promise<DeckSpec> {
-  const instruction = input.instruction || "Make each slide sharper for a 60-second hackathon demo.";
+  const instruction = input.instruction || "Make each slide clearer, more complete, and easier to inspect in Figma.";
   const slides = await Promise.all(
     input.deck.slides.map(async (slide, index) => {
       send?.("polish_started", { slideId: slide.id, title: slide.title });
@@ -108,10 +108,10 @@ export function normalizeGenerateRequest(input: GenerateRequest): GenerateReques
   return {
     idea:
       input.idea?.trim() ||
-      "A realtime Gemma 4 on Cerebras deck builder that turns gbrain context and brainstorming into Figma Slides.",
+      "A realtime Gemma 4 on Cerebras deck builder that turns knowledge context and brainstorming into Figma Slides.",
     audience: input.audience?.trim() || "Cerebras x Gemma hackathon judges and enterprise AI buyers",
     brainstormNotes: input.brainstormNotes?.trim() || "",
-    gbrainContext: input.gbrainContext?.trim() || "",
+    sourceContext: input.sourceContext?.trim() || "",
     slideCount: 10
   };
 }
@@ -333,9 +333,9 @@ function fallbackDeck(input: GenerateRequest, findings: AgentFinding[]): DeckSpe
     ],
     slides,
     demoScript: [
-      "Paste idea and run a gbrain query.",
+      "Paste idea and run a knowledge query.",
       "Show Gemma agents categorizing context into ten distinct slide formats.",
-      "Let the six-second eval/fix swarm visibly repair the outline.",
+      "Let the eval/fix swarm repair the outline against explicit acceptance criteria.",
       "Build the final varied deck in Figma with the Desktop Bridge.",
       "Save feedback so the next run gets sharper."
     ],
@@ -401,7 +401,7 @@ function fallbackSlideForStyle(index: number, input: GenerateRequest, findings: 
   const proofHeadline = proof[index % Math.max(proof.length, 1)]?.headline || "Fast parallel proof";
   const proofEvidence =
     proof[index % Math.max(proof.length, 1)]?.evidence ||
-    input.gbrainContext ||
+    input.sourceContext ||
     "Live app state, Desktop Bridge writes, and per-agent latency chips.";
   const copy: Record<string, { headline: string; body: string; bullets: string[]; evidence: string[]; visual: string }> = {
     "cold-open": {
@@ -409,7 +409,7 @@ function fallbackSlideForStyle(index: number, input: GenerateRequest, findings: 
       body: "Gemma 4 agents on Cerebras split story, proof, design, critique, and Figma implementation into visible live work.",
       bullets: ["Idea/context in", "Ten-format outline", "Figma deck out"],
       evidence: ["The UI streams agent lanes before the final deck appears."],
-      visual: "Dark live-demo opener with a large claim and Speak component reference thumbnails."
+      visual: "Dark opener with a large claim and reference-deck thumbnails."
     },
     "stakes-thesis": {
       headline: "Low latency changes slide creation from batch output to live collaboration.",
@@ -420,7 +420,7 @@ function fallbackSlideForStyle(index: number, input: GenerateRequest, findings: 
     },
     "context-map": {
       headline: "Private context becomes categorized proof instead of a note dump.",
-      body: "Gbrain, Obsidian, brainstorm notes, and feedback memory are split into source buckets, claims, and caveats.",
+      body: "Knowledge, local notes, brainstorm notes, and feedback memory are split into source buckets, claims, and caveats.",
       bullets: ["Source proof", "Deck implication", "Caveat to preserve"],
       evidence: [proofEvidence],
       visual: "Evidence wall separating source cards from agent interpretation cards."
@@ -436,7 +436,7 @@ function fallbackSlideForStyle(index: number, input: GenerateRequest, findings: 
       headline: "The product is a loop: draft, evaluate, repair, then remember.",
       body: "The first outline is not final; the swarm spends a visible eval window fixing the weak beats.",
       bullets: ["Draft outline", "Run format gates", "Save feedback memory"],
-      evidence: ["The six-second eval/fix clock emits one gate per slide format."],
+      evidence: ["Each eval/fix gate records a concrete requirement and repair."],
       visual: "Before/after slide showing generic scaffolds becoming slide-specific jobs."
     },
     "before-after": {
@@ -444,35 +444,35 @@ function fallbackSlideForStyle(index: number, input: GenerateRequest, findings: 
       body: "Variety starts in the text outline: each slide has a different information architecture and design directive.",
       bullets: ["Old: repeated cards", "New: required format", "Proof: renderer-specific design"],
       evidence: ["Ten outline styles map to ten Figma renderer patterns."],
-      visual: "Dark metric slide with the speed target and action bars."
+      visual: "Dark metric slide with implementation completeness and QA pass bars."
     },
     "speed-metric": {
-      headline: "The demo target is ten varied slides plus 5+ meaningful Figma actions per second.",
-      body: "A meaningful action is a visible build, review, revise, polish, or finalize update on a slide.",
-      bullets: ["10 slides", "50 visible gates", "5+ actions/sec"],
-      evidence: ["Bridge result reports actionCount and actionsPerSecond."],
+      headline: "The reliability target is ten complete slides with QA pass evidence.",
+      body: "A meaningful result is a generated slide that has content, layout, proof, and a clean QA state.",
+      bullets: ["10 slides", "98%+ implemented", "QA pass/fail"],
+      evidence: ["Bridge results report completeness, warnings, section id, and QA evidence."],
       visual: "System map from Gemma lanes into a Figma deck hub."
     },
     "system-map": {
       headline: "The Gemma swarm works because each lane owns a different failure mode.",
-      body: "Story catches weak arcs, evidence catches unsupported claims, visual catches sameness, critic catches demo risk, and Figma catches implementation fit.",
-      bullets: ["Story: arc", "Evidence: proof", "Visual: design variety", "Critic: demo risk", "Figma: buildability"],
+      body: "Story catches weak arcs, evidence catches unsupported claims, visual catches sameness, critic catches product risk, and Figma catches implementation fit.",
+      bullets: ["Story: arc", "Evidence: proof", "Visual: design variety", "Critic: product risk", "Figma: buildability"],
       evidence: ["Agent lanes stream separate summaries before synthesis."],
-      visual: "Bold critique quote with a local Speak design cue."
+      visual: "Bold critique quote with a reference design cue."
     },
     "critique-fix": {
       headline: "The best moment is the system naming a weak slide and fixing it.",
       body: "Each format gate checks one hard requirement, applies a concrete repair, and passes a visible acceptance criterion.",
       bullets: ["Diagnosis", "Fix", "Acceptance criterion"],
       evidence: ["Eval cards report per-slide requirement checks."],
-      visual: "Artifact slide with a Speak reference thumbnail and agentic fix notes."
+      visual: "Artifact slide with a reference thumbnail and agentic fix notes."
     },
     "operator-close": {
       headline: "The finished artifact is a Figma deck the operator can inspect, edit, and ship.",
       body: "The operator leaves with a real deck in the same Figma file, ready for inspection, edits, and shipment.",
       bullets: ["Watch", "Edit", "Ship"],
       evidence: ["Final Figma section is created below existing file content."],
-      visual: "Dark closing slide with command chips and a final Speak component cue."
+      visual: "Dark closing slide with command chips and a final reference cue."
     }
   };
   const selected = copy[style.id];

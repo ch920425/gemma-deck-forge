@@ -365,9 +365,9 @@ function addTypedVisual(frame, slide, index) {
   const ink = isDark(index) ? palette.white : palette.ink;
   if (index === 0) {
     rect(frame, "opener slab", 0, 0, 286, deck.slideHeight, palette.blue, 0);
-    rect(frame, "live demo tab", 46, 42, 132, 34, palette.amber, 8);
-    text(frame, "live demo tab text", "LIVE DEMO", 66, 53, 90, 11, palette.ink, true);
-    referenceCue(frame, "speak sample", 608, 86, 258, 142, "Speak style sample", palette.blue);
+    rect(frame, "live build tab", 46, 42, 132, 34, palette.amber, 8);
+    text(frame, "live build tab text", "LIVE BUILD", 66, 53, 90, 11, palette.ink, true);
+    referenceCue(frame, "reference sample", 608, 86, 258, 142, "reference style sample", palette.blue);
     referenceCue(frame, "component grammar", 654, 262, 212, 112, "component grammar", palette.blue);
   } else if (index === 1) {
     rect(frame, "thesis rail", 0, 0, 24, deck.slideHeight, accent, 0);
@@ -400,9 +400,9 @@ function addTypedVisual(frame, slide, index) {
     text(frame, "after copy", slide.bullets[1] || "Specific slide job", 524, 246, 270, 24, palette.ink, true);
     rect(frame, "transition", 426, 286, 64, 8, palette.amber, 4);
   } else if (index === 5) {
-    text(frame, "metric", "5+ actions/sec", 56, 202, 500, 58, palette.amber, true);
+    text(frame, "metric", "QA pass evidence", 56, 202, 500, 58, palette.amber, true);
     [0, 1, 2, 3, 4].forEach(i => rect(frame, "metric bar " + i, 620 + i * 48, 390 - (62 + i * 30), 32, 62 + i * 30, i === 4 ? palette.amber : palette.blue, 6));
-    referenceCue(frame, "speed proof", 610, 86, 230, 116, "Speak speed proof", palette.blue);
+    referenceCue(frame, "quality proof", 610, 86, 230, 116, "quality proof", palette.blue);
   } else if (index === 6) {
     ellipse(frame, "map hub", 394, 194, 162, 162, palette.blue);
     text(frame, "map hub label", "Gemma swarm", 425, 252, 96, 18, palette.white, true);
@@ -416,7 +416,7 @@ function addTypedVisual(frame, slide, index) {
     text(frame, "quote mark", String.fromCharCode(34), 54, 42, 120, 96, palette.amber, true);
     referenceCue(frame, "quote cue", 638, 326, 224, 112, "design critique cue", palette.blue);
   } else if (index === 8) {
-    referenceCue(frame, "artifact source", 54, 164, 360, 220, "Speak source asset", palette.blue);
+    referenceCue(frame, "artifact source", 54, 164, 360, 220, "source asset", palette.blue);
     rect(frame, "artifact note panel", 454, 164, 392, 220, palette.white, 8);
     text(frame, "artifact note label", "AGENTIC NOTES", 482, 190, 140, 11, accent, true);
     [0, 1, 2].forEach(i => text(frame, "artifact item " + i, slide.bullets[i % slide.bullets.length] || "fix note", 510, 230 + i * 44, 280, 14, palette.ink, true));
@@ -768,13 +768,13 @@ function cleanFinalLayout(frame, slide, index) {
   frame.fills = [paint(bg)];
   if (index === 0) {
     rect(frame, "blue slab", 0, 0, 292, 540, "#1146D4", 0);
-    rect(frame, "live demo tab", 50, 48, 136, 36, "#FFA629", 8);
-    finalText(frame, "live demo tab text", "LIVE DEMO", 70, 60, 90, 12, "#17211D", true, 1);
+    rect(frame, "live build tab", 50, 48, 136, 36, "#FFA629", 8);
+    finalText(frame, "live build tab text", "LIVE BUILD", 70, 60, 90, 12, "#17211D", true, 1);
     finalText(frame, "headline", slide.headline, 50, 120, 560, 42, "#FFFFFF", true, 4);
     finalText(frame, "body", bodyCopy(slide, "Live Gemma agents turn raw ideas into a polished Figma deck."), 54, 356, 430, 17, "#DCE7DF", false, 4);
     card(frame, "reference sample", 646, 86, 238, 142, "#F7FAFF", "#E6EAF2");
     rect(frame, "reference sample band", 646, 86, 238, 42, "#1146D4", 8);
-    finalText(frame, "reference sample label", "Speak style sample", 666, 188, 188, 12, "#17211D", true, 1);
+    finalText(frame, "reference sample label", "reference style sample", 666, 188, 188, 12, "#17211D", true, 1);
     card(frame, "component sample", 666, 270, 218, 112, "#F7FAFF", "#E6EAF2");
     finalText(frame, "component sample label", "component grammar", 686, 330, 170, 12, "#17211D", true, 1);
   } else if (index === 1) {
@@ -817,7 +817,7 @@ function cleanFinalLayout(frame, slide, index) {
   } else if (index === 5) {
     header(frame, slide, index, "#FFFFFF", "#FFA629");
     finalText(frame, "headline", slide.headline, 58, 98, 650, 38, "#FFFFFF", true, 3);
-    finalText(frame, "metric", "5+ actions/sec", 58, 284, 430, 48, "#FFA629", true, 1);
+    finalText(frame, "metric", "QA pass evidence", 58, 284, 430, 48, "#FFA629", true, 1);
     finalText(frame, "body", bodyCopy(slide, "A meaningful action is a visible build, review, revise, polish, or finalize update."), 62, 388, 500, 16, "#DCE7DF", false, 3);
     [0, 1, 2, 3, 4].forEach(i => rect(frame, "metric bar " + i, 640 + i * 48, 420 - (76 + i * 28), 32, 76 + i * 28, i === 4 ? "#FFA629" : "#1146D4", 6));
   } else if (index === 6) {
@@ -851,7 +851,7 @@ function cleanFinalLayout(frame, slide, index) {
     header(frame, slide, index, dark ? "#FFFFFF" : "#17211D", "#FFA629");
     rect(frame, "closing rail", 0, 0, 960, 18, "#FFA629", 0);
     finalText(frame, "headline", slide.headline, 64, 110, 640, 40, ink, true, 4);
-    finalText(frame, "body", bodyCopy(slide, "The deck is built in Figma, validated, and ready for the hackathon demo."), 68, 348, 548, 17, muted, false, 4);
+    finalText(frame, "body", bodyCopy(slide, "The deck is built in Figma, validated, and ready for review."), 68, 348, 548, 17, muted, false, 4);
     ["WATCH", "EDIT", "SHIP"].forEach((label, i) => {
       rect(frame, "closing chip " + i, 630 + i * 86, 342, 70, 36, i === 1 ? "#FFA629" : "#1146D4", 8);
       finalText(frame, "closing chip text " + i, label, 643 + i * 86, 354, 46, 11, i === 1 ? "#17211D" : "#FFFFFF", true, 1);
@@ -1303,13 +1303,13 @@ async function renderOpener(frame, slide, index) {
   frame.fills = [paint(palette.navy)];
   rect(frame, "blue slab", 0, 0, 285, deck.slideHeight, palette.blue, 0);
   rect(frame, "amber tab", 46, 42, 128, 32, palette.amber, 8);
-  text(frame, "tab", "LIVE DEMO", 64, 51, 96, 11, palette.ink, true);
+  text(frame, "tab", "LIVE BUILD", 64, 51, 96, 11, palette.ink, true);
   text(frame, "headline", short(slide.headline, 88), 46, 104, 530, 42, palette.white, true);
   text(frame, "body", short(slide.body, 150), 52, 318, 420, 16, "#DCE7DF");
-  await referenceThumb(frame, index, 610, 58, 266, 154, "Speak style sample");
+  await referenceThumb(frame, index, 610, 58, 266, 154, "reference style sample");
   await referenceThumb(frame, index + 1, 660, 244, 216, 122, "component grammar");
   ellipse(frame, "speed dot", 560, 392, 52, 52, palette.amber);
-  text(frame, "speed", "5+/s", 571, 408, 42, 15, palette.ink, true);
+  text(frame, "quality", "PASS", 571, 408, 42, 15, palette.ink, true);
   return addProgress(frame, slide, index, "dark");
 }
 async function renderThesis(frame, slide, index) {
@@ -1321,7 +1321,7 @@ async function renderThesis(frame, slide, index) {
   text(frame, "claim one", bullet(slide, 0, "Parallel agents split the thinking."), 666, 120, 184, 17, palette.ink, true);
   card(frame, "claim chip two", 646, 190, 228, 72, "#FFF4D9", palette.amber);
   text(frame, "claim two", bullet(slide, 1, "Figma updates visibly improve over time."), 666, 212, 184, 17, palette.ink, true);
-  await referenceThumb(frame, index + 2, 646, 302, 228, 120, "Speak pacing cue");
+  await referenceThumb(frame, index + 2, 646, 302, 228, 120, "reference pacing cue");
   return addProgress(frame, slide, index, "light");
 }
 async function renderEvidenceWall(frame, slide, index) {
@@ -1334,7 +1334,7 @@ async function renderEvidenceWall(frame, slide, index) {
     text(frame, "evidence label " + i, i < 3 ? "SOURCE" : "AGENT NOTE", pos[0] + 16, pos[1] + 14, 110, 10, slide.accent, true);
     text(frame, "evidence copy " + i, i < 3 ? evidence(slide, i, "Reference artifact from the open Figma file.") : bullet(slide, i, "Review pass tightened this slide."), pos[0] + 16, pos[1] + 36, 180, 14, palette.ink, true);
   });
-  await referenceThumb(frame, index + 3, 792, 90, 112, 260, "Speak proof cue");
+  await referenceThumb(frame, index + 3, 792, 90, 112, 260, "reference proof cue");
   return addProgress(frame, slide, index, "light");
 }
 async function renderWorkflow(frame, slide, index) {
@@ -1363,7 +1363,7 @@ async function renderBeforeAfter(frame, slide, index) {
   text(frame, "before copy", bullet(slide, 0, "Flat generated slides repeat the same pattern."), 78, 242, 300, 24, palette.ink, true);
   text(frame, "after copy", bullet(slide, 1, "Agentic review creates varied, purposeful slide jobs."), 534, 242, 300, 24, palette.ink, true);
   await referenceThumb(frame, index + 4, 80, 316, 150, 62, "old scaffold");
-  await referenceThumb(frame, index + 5, 536, 316, 150, 62, "Speak target grammar");
+  await referenceThumb(frame, index + 5, 536, 316, 150, 62, "target grammar");
   line(frame, "transition", 436, 286, 72, palette.amber, 8);
   ellipse(frame, "transition dot", 464, 270, 40, 40, palette.amber);
   return addProgress(frame, slide, index, "light");
@@ -1372,14 +1372,14 @@ async function renderMetric(frame, slide, index) {
   frame.fills = [paint(palette.navy)];
   header(frame, slide, index, palette.white, palette.amber);
   text(frame, "headline", short(slide.headline, 96), 52, 86, 500, 34, palette.white, true);
-  text(frame, "big metric", "5+ actions/sec", 54, 212, 520, 58, palette.amber, true);
+  text(frame, "big metric", "QA pass evidence", 54, 212, 520, 58, palette.amber, true);
   text(frame, "body", short(slide.body, 150), 60, 314, 420, 17, "#DCE7DF");
   [0, 1, 2, 3, 4].forEach((_, i) => {
     const h = 54 + i * 32;
     rect(frame, "bar " + i, 610 + i * 52, 384 - h, 34, h, i === 4 ? palette.amber : palette.blue, 6);
     text(frame, "bar label " + i, String(i + 1), 620 + i * 52, 398, 16, 11, "#DCE7DF", true);
   });
-  await referenceThumb(frame, index + 6, 604, 86, 230, 126, "Speak speed proof");
+  await referenceThumb(frame, index + 6, 604, 86, 230, 126, "quality proof");
   return addProgress(frame, slide, index, "dark");
 }
 async function renderSystemMap(frame, slide, index) {
@@ -1387,7 +1387,7 @@ async function renderSystemMap(frame, slide, index) {
   text(frame, "headline", short(slide.headline, 80), 52, 80, 600, 34, palette.ink, true);
   ellipse(frame, "hub", 400, 202, 160, 160, palette.blue);
   text(frame, "hub text", "Gemma swarm", 428, 258, 104, 18, palette.white, true);
-  const nodes = [[130, 186, "gbrain"], [684, 176, "Figma"], [184, 374, "eval"], [660, 368, "polish"]];
+  const nodes = [[130, 186, "knowledge"], [684, 176, "Figma"], [184, 374, "eval"], [660, 368, "polish"]];
   nodes.forEach((item, i) => {
     line(frame, "map line " + i, 480, 280, i < 2 ? 244 : 194, palette.grid, 3);
     card(frame, "map node " + i, item[0], item[1], 160, 74, i === 1 ? "#FFF4D9" : palette.white, i === 1 ? palette.amber : palette.grid);
@@ -1401,13 +1401,13 @@ async function renderQuote(frame, slide, index) {
   text(frame, "quote mark", String.fromCharCode(34), 56, 50, 120, 96, palette.amber, true);
   text(frame, "headline", short(slide.headline, 92), 96, 116, 710, 44, palette.white, true);
   text(frame, "body", short(slide.body, 150), 102, 318, 520, 18, "#DCE7DF");
-  await referenceThumb(frame, index + 7, 650, 330, 220, 116, "Speak design cue");
+  await referenceThumb(frame, index + 7, 650, 330, 220, 116, "reference design cue");
   return addProgress(frame, slide, index, "dark");
 }
 async function renderArtifact(frame, slide, index) {
   header(frame, slide, index, palette.ink, slide.accent);
   text(frame, "headline", short(slide.headline, 76), 52, 74, 560, 34, palette.ink, true);
-  await referenceThumb(frame, index + 8, 52, 166, 366, 218, "Speak source asset");
+  await referenceThumb(frame, index + 8, 52, 166, 366, 218, "source asset");
   card(frame, "artifact notes", 458, 166, 390, 218, palette.white, palette.grid);
   text(frame, "artifact label", "AGENTIC NOTES", 482, 192, 140, 11, slide.accent, true);
   [0, 1, 2].forEach((_, i) => {
@@ -1442,7 +1442,7 @@ async function renderClosing(frame, slide, index) {
     rect(frame, "closing chip " + i, 608 + i * 92, 326, 72, 36, i === 1 ? palette.amber : palette.blue, 8);
     text(frame, "closing chip text " + i, word.toUpperCase(), 620 + i * 92, 338, 46, 10, i === 1 ? palette.ink : palette.white, true);
   });
-  await referenceThumb(frame, index + 9, 608, 230, 230, 86, "Speak final cue");
+  await referenceThumb(frame, index + 9, 608, 230, 230, 86, "final cue");
   return addProgress(frame, slide, index, "dark");
 }
 text(section, "section title", deck.title, deck.padding, 30, 1200, 34, "#FFFDF7", true);
@@ -1604,7 +1604,7 @@ const designBeats = [
   },
   {
     title: "Context becomes evidence",
-    headline: "Gbrain and source notes turn into claims, proof, and caveats.",
+    headline: "Knowledge and source notes turn into claims, proof, and caveats.",
     body: "The product should show source organization as a visible part of the deck-making workflow, not hidden prep work.",
     bullets: ["Cluster context", "Extract proof", "Flag caveats"],
     evidence: ["Source cards and agent notes appear as designed artifacts on the slide"],
@@ -1612,7 +1612,7 @@ const designBeats = [
   },
   {
     title: "Agent loop anatomy",
-    headline: "The useful demo is the sequence of improvements, not just the final deck.",
+    headline: "The useful product is the sequence of improvements, not just the final deck.",
     body: "Each pass has a different job: scaffold, evaluate, patch the weak spots, then harmonize the deck.",
     bullets: ["Scaffold first", "Diagnose precisely", "Apply holistic rhythm"],
     evidence: ["Five visible phase chips update across all ten slides"],
@@ -1628,7 +1628,7 @@ const designBeats = [
   },
   {
     title: "Speed proof",
-    headline: "The demo should show at least five meaningful Figma actions per second.",
+    headline: "The deck should prove generation completeness and QA pass state.",
     body: "Figma receives one reliable write stream while the app presents the planning and review work as parallel agent lanes.",
     bullets: ["10 slides", "50 gate updates", "Measured execution"],
     evidence: ["Bridge response returns actionsPerSecond after the run"],
@@ -1661,7 +1661,7 @@ const designBeats = [
   {
     title: "Final operator view",
     headline: "The outcome is a deck the user can immediately inspect, edit, and ship.",
-    body: "The close should feel like an operator handoff: the deck is built in Figma, validated, and ready for the hackathon demo.",
+    body: "The close should feel like an operator handoff: the deck is built in Figma, validated, and ready for review.",
     bullets: ["Watch", "Edit", "Ship"],
     evidence: ["Final section is placed below existing file content and selected in the viewport"],
     accent: "#0E7C66"
@@ -1689,7 +1689,7 @@ function applyDesignBeat(
   const beat = styleBackedBeat(index);
   const combined = `${slide.title} ${slide.headline} ${slide.body}`.toLowerCase();
   const generic =
-    /demo beat|show one concrete step|use this slide|deck-making loop|workflow visible and fast/.test(combined) ||
+    /review beat|show one concrete step|use this slide|deck-making loop|workflow visible and robust/.test(combined) ||
     !slide.headline ||
     slide.headline.length < 18;
   return {

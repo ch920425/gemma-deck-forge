@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildGbrainSql, parseSupabaseRows, runCommand, runGbrainQuery } from "../src/server/gbrain";
+import { buildKnowledgeSql, parseSupabaseRows, runCommand, runKnowledgeQuery } from "../src/server/knowledge";
 
-describe("gbrain Supabase CLI query", () => {
+describe("knowledge Supabase CLI query", () => {
   it("builds a bounded full text search over pages and chunks", () => {
-    const sql = buildGbrainSql("Gemma's fastest deck", 50);
+    const sql = buildKnowledgeSql("Gemma's fastest deck", 50);
     expect(sql).toContain("public.pages");
     expect(sql).toContain("public.content_chunks");
     expect(sql).toContain("Gemma''s fastest deck");
@@ -80,8 +80,8 @@ describe("gbrain Supabase CLI query", () => {
     expect(hits[0]).toMatchObject({ source: "page", title: "Deck", excerpt: "Useful proof", score: 0.7 });
   });
 
-  it.runIf(Boolean(process.env.SUPABASE_WORKDIR))("runs a live linked gbrain query through Supabase CLI", async () => {
-    const result = await runGbrainQuery("Gemma Cerebras Figma", 2);
+  it.runIf(Boolean(process.env.KNOWLEDGE_SUPABASE_WORKDIR))("runs a live linked knowledge query through Supabase CLI", async () => {
+    const result = await runKnowledgeQuery("Gemma Cerebras Figma", 2);
     expect(result.ok).toBe(true);
     expect(result.sql).toContain("public.content_chunks");
     expect(Array.isArray(result.hits)).toBe(true);
@@ -91,7 +91,7 @@ describe("gbrain Supabase CLI query", () => {
     const timedOut = await runCommand(process.execPath, ["-e", "setTimeout(() => {}, 1000)"], 10);
     expect(timedOut.stderr).toContain("Timed out");
 
-    const missing = await runCommand("definitely-not-a-real-gbrain-command", [], 1000);
+    const missing = await runCommand("definitely-not-a-real-knowledge-command", [], 1000);
     expect(missing.code).toBe(1);
     expect(missing.stderr).toBeTruthy();
   });

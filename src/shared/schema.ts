@@ -20,7 +20,7 @@ export type SlideLayout =
   | "artifact"
   | "closing";
 
-export interface GbrainHit {
+export interface KnowledgeHit {
   source: string;
   title: string;
   excerpt: string;
@@ -150,7 +150,7 @@ export interface GenerateRequest {
   idea: string;
   audience: string;
   brainstormNotes: string;
-  gbrainContext: string;
+  sourceContext: string;
   slideCount: number;
 }
 

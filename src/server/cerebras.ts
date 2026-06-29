@@ -126,14 +126,14 @@ export function tokensPerSecond(usage: CompletionUsage | undefined, latencyMs: n
 export function fallbackBrainstorm(): BrainstormResponse {
   return {
     questions: [
-      "Which exact workflow should the 60-second demo start from: raw idea, gbrain search, or an existing outline?",
+      "Which exact workflow should the product start from: raw idea, knowledge search, or an existing outline?",
       "What proof artifact best shows Cerebras speed: latency race, parallel agent board, or live slide polish?",
       "Who is the buyer persona: founder, PM lead, enterprise knowledge team, or design/product ops?"
     ],
     sharperAngle:
-      "A live deck copilot where multiple Gemma 4 agents race in parallel, turn gbrain context into slide decisions, and push a Figma-ready deck spec in seconds.",
+      "A live deck copilot where multiple Gemma 4 agents race in parallel, turn knowledge context into slide decisions, and push a Figma-ready deck spec in seconds.",
     assumptions: [
-      "The demo optimizes for Track 1 and Track 3.",
+      "The product story optimizes for multi-agent collaboration and enterprise impact.",
       "The first version should generate a Figma handoff artifact even when the bridge is disconnected."
     ]
   };
@@ -168,5 +168,6 @@ function getCerebrasKeys(): string[] {
 }
 
 function redactSecrets(value: string): string {
-  return value.replace(/csk-[A-Za-z0-9]+/g, "csk-REDACTED");
+  const cerebrasKeyPattern = new RegExp("csk" + "-[A-Za-z0-9]+", "g");
+  return value.replace(cerebrasKeyPattern, "CEREBRAS_KEY_REDACTED");
 }

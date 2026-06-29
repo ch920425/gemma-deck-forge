@@ -28,10 +28,10 @@ describe("live Cerebras deck generation", () => {
     const events: string[] = [];
     const deck = await generateDeck(
       {
-        idea: "Realtime Cerebras Gemma agents turn gbrain context into Figma Slides.",
+        idea: "Realtime Cerebras Gemma agents turn knowledge context into Figma Slides.",
         audience: "hackathon judges",
         brainstormNotes: "Show speed as the product interaction.",
-        gbrainContext: "Recovered Figma Desktop Bridge workflow and Supabase gbrain schema.",
+        sourceContext: "Recovered Figma Desktop Bridge workflow and Supabase knowledge schema.",
         slideCount: 10
       },
       (event) => events.push(event)
@@ -44,7 +44,7 @@ describe("live Cerebras deck generation", () => {
 
     const polished = await polishDeck({
       deck: { ...deck, slides: deck.slides.slice(0, 1), figmaSpec: { ...deck.figmaSpec, slides: deck.figmaSpec.slides.slice(0, 1) } },
-      instruction: "Make the opener more concrete for a 60-second demo."
+      instruction: "Make the opener more concrete for a live product review."
     });
     expect(polished.slides).toHaveLength(1);
     expect(polished.figmaSpec.slides[0].headline).toBe(polished.slides[0].headline);

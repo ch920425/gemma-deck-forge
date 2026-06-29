@@ -19,7 +19,7 @@ import type {
   FigmaBuildPlan,
   FigmaBuildResponse,
   FigmaSlideBuildStage,
-  GbrainHit,
+  KnowledgeHit,
   SwarmTextDraft
 } from "./shared/schema";
 
@@ -81,11 +81,11 @@ const workflowSteps: Array<{ id: WorkflowStep; label: string; description: strin
 export function App() {
   const [step, setStep] = useState<WorkflowStep>("idea");
   const [idea, setIdea] = useState(starterIdea);
-  const [kbQuery, setKbQuery] = useState("Gemma Cerebras Figma slide deck agentic Obsidian context");
+  const [kbQuery, setKbQuery] = useState("Gemma Cerebras Figma slide deck agentic local notes context");
   const [contextLanes, setContextLanes] = useState<Record<string, ContextLaneState>>({});
   const [contextWorkflows, setContextWorkflows] = useState<Record<string, AgenticWorkflowState>>({});
   const [contextStatus, setContextStatus] = useState("idle");
-  const [contextHits, setContextHits] = useState<GbrainHit[]>([]);
+  const [contextHits, setContextHits] = useState<KnowledgeHit[]>([]);
   const [rawContext, setRawContext] = useState("");
   const [contextWriterAgents, setContextWriterAgents] = useState<Record<string, SwarmTextDraft>>({});
   const [finalizedContext, setFinalizedContext] = useState("");
@@ -200,7 +200,7 @@ export function App() {
       "",
       "## Retrieved Evidence To Use",
       "- Cerebras-backed Gemma agents can run fast parallel drafting, review, and repair loops.",
-      "- Obsidian and KB retrieval provide source grounding before the outline agents write slides.",
+      "- local notes and KB retrieval provide source grounding before the outline agents write slides.",
       "- Figma Bridge actions make the final output visible directly in the design file.",
       "",
       "## Downstream Prompt Notes",
@@ -209,12 +209,12 @@ export function App() {
       "- Figma agents should produce varied, screenshot-ready slide structures."
     ].join("\n");
     const lanes: ContextLaneState[] = [
-      { laneId: "gbrain", label: "KB retrieval", status: "done", summary: "Retrieved ranked KB context and source cues.", elapsedMs: 240, hitCount: 4 },
-      { laneId: "obsidian", label: "Obsidian CLI", status: "done", summary: "Scanned local notes and extracted deck-relevant excerpts.", elapsedMs: 190, hitCount: 4 },
+      { laneId: "knowledge", label: "KB retrieval", status: "done", summary: "Retrieved ranked KB context and source cues.", elapsedMs: 240, hitCount: 4 },
+      { laneId: "local_notes", label: "local notes CLI", status: "done", summary: "Scanned local notes and extracted deck-relevant excerpts.", elapsedMs: 190, hitCount: 4 },
       { laneId: "gemma", label: "Gemma organizer", status: "done", summary: "Compressed context into claims, caveats, and deck implications.", elapsedMs: 310, hitCount: 1 },
       { laneId: "brief", label: "Local context brief", status: "done", summary: "Normalized the user braindump to unblock slide agents.", elapsedMs: 90, hitCount: 1 },
-      { laneId: "gbrain_followup", label: "KB gap retrieval", status: "done", summary: "Loop 2 issued sharper missing-proof retrieval prompts.", elapsedMs: 260, hitCount: 3 },
-      { laneId: "obsidian_followup", label: "Obsidian gap scan", status: "done", summary: "Loop 2 scanned for caveats, audience cues, and design constraints.", elapsedMs: 220, hitCount: 3 },
+      { laneId: "knowledge_followup", label: "KB gap retrieval", status: "done", summary: "Loop 2 issued sharper missing-proof retrieval prompts.", elapsedMs: 260, hitCount: 3 },
+      { laneId: "local_notes_followup", label: "local notes gap scan", status: "done", summary: "Loop 2 scanned for caveats, audience cues, and design constraints.", elapsedMs: 220, hitCount: 3 },
       { laneId: "gemma_gap_review", label: "Gemma gap reviewer", status: "done", summary: "Reviewed loop 1 and diagnosed missing context for brainstorming.", elapsedMs: 330, hitCount: 1 },
       { laneId: "context_tightener", label: "Context tightener", status: "done", summary: "Compressed all retrieved context into the final brainstorming prompt artifact.", elapsedMs: 140, hitCount: 1 }
     ];
@@ -222,7 +222,7 @@ export function App() {
       context_loop_1: {
         workflowId: "context_loop_1",
         label: "Context loop 1/2",
-        summary: "Initial KB, Obsidian, Gemma, and local brief retrieval completed.",
+        summary: "Initial KB, local notes, Gemma, and local brief retrieval completed.",
         status: "done",
         elapsedMs: 640,
         hitCount: 10
@@ -253,7 +253,7 @@ export function App() {
     setContextLanes(Object.fromEntries(lanes.map((lane) => [lane.laneId, lane])));
     setContextHits([
       { source: "kb", title: "Cerebras speed proof", excerpt: "Low latency makes multi-agent iteration feel live." },
-      { source: "obsidian", title: "Local notes", excerpt: "Context should become structured proof, caveats, and slide implications." },
+      { source: "local_notes", title: "Local notes", excerpt: "Context should become structured proof, caveats, and slide implications." },
       { source: "figma", title: "Bridge action cue", excerpt: "Ordered Figma writes can still look like parallel agent work in the UI." }
     ]);
     const drafts: SwarmTextDraft[] = [
@@ -263,7 +263,7 @@ export function App() {
       ["context_risk", "Caveat Reviewer", "risk and uncertainty", "Flagged unsupported speed, visual quality, and bridge reliability claims for eval checks."],
       ["context_editor", "Final Editor", "polished final brief", "Finalized prompt-ready context for outline, eval, edit, and Figma agents."],
       ["context_gap_reviewer", "Gap Reviewer", "missing information", "Loop 2 diagnosed missing proof, audience cues, and design constraints."],
-      ["context_followup_query", "Follow-up Query Writer", "retrieval prompts", "Loop 2 wrote sharper Obsidian and KB prompts for missing information."],
+      ["context_followup_query", "Follow-up Query Writer", "retrieval prompts", "Loop 2 wrote sharper local notes and KB prompts for missing information."],
       ["context_proof_merger", "Proof Merger", "source consolidation", "Merged first and second retrieval outputs into concise proof clusters."],
       ["context_prompt_tightener", "Prompt Tightener", "brainstorm readiness", "Compressed the context so brainstorming agents can use it immediately."],
       ["context_final_gate", "Context Final Gate", "quality gate", "Rejected repetition and vague claims before final context handoff."]
@@ -329,7 +329,7 @@ export function App() {
         idea,
         audience: hiddenAudience,
         brainstormNotes: brainstorm?.finalBrief || brainstormNotes,
-        gbrainContext: hiddenPromptContext,
+        sourceContext: hiddenPromptContext,
         slideCount: hiddenSlideCount
       },
       handleDeckEvent
@@ -342,7 +342,7 @@ export function App() {
   async function runSlideGenerationDemoLoop() {
     const lanes = [
       ["story", "Story Agent", "Drafting narrative arc from brainstorm and context."],
-      ["evidence", "Evidence Agent", "Mapping KB and Obsidian proof into slide jobs."],
+      ["evidence", "Evidence Agent", "Mapping KB and local notes proof into slide jobs."],
       ["visual", "Design Agent", "Assigning varied slide scaffolds and visual patterns."],
       ["figma", "Figma Agent", "Writing layout directives for Figma execution."],
       ["critic", "Critic Agent", "Finding weak claims, repetition, and missing proof."],
@@ -673,7 +673,7 @@ export function App() {
       return;
     }
     if (event === "context_lane_complete") {
-      const item = payload as { laneId: string; label: string; summary: string; elapsedMs: number; hits?: GbrainHit[] };
+      const item = payload as { laneId: string; label: string; summary: string; elapsedMs: number; hits?: KnowledgeHit[] };
       setContextLanes((prev) => ({
         ...prev,
         [item.laneId]: {
@@ -701,7 +701,7 @@ export function App() {
       return;
     }
     if (event === "context_complete") {
-      const item = payload as { hitCount: number; laneCount: number; hits: GbrainHit[]; context: string };
+      const item = payload as { hitCount: number; laneCount: number; hits: KnowledgeHit[]; context: string };
       setContextHits(item.hits || []);
       setRawContext(item.context || "");
       setContextStatus(item.hitCount ? `${item.hitCount} hits across ${item.laneCount} lanes` : "context ready");
@@ -906,7 +906,7 @@ export function App() {
               <div>
                 <p className="eyebrow">Step 3</p>
                 <h2>Brainstorm until the slide content has enough meat.</h2>
-                <p className="stageIntro">Five Gemma agents attack the concept from product, demo, technical, judge, and narrative angles.</p>
+                <p className="stageIntro">Five Gemma agents attack the concept from product, workflow, technical, judge, and narrative angles.</p>
               </div>
               <button className="secondaryButton compact" onClick={runBrainstormSwarm} disabled={busy}>
                 <MessageSquare size={18} />
@@ -1133,7 +1133,7 @@ function FinalTextWindow({ title, text, dynamic = false }: { title: string; text
   );
 }
 
-function EvidenceTray({ hits }: { hits: GbrainHit[] }) {
+function EvidenceTray({ hits }: { hits: KnowledgeHit[] }) {
   if (!hits.length) return null;
   return (
     <section className="evidenceTray">

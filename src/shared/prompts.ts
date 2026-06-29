@@ -12,13 +12,13 @@ export const agentPrompts: AgentPrompt[] = [
     id: "story",
     label: "Story Architect",
     system:
-      "You are a ruthless startup demo storyteller. Find the sharpest 60-second story arc, name the wedge, and convert messy idea/context into executive slide beats."
+      "You are a ruthless product storyteller. Find the sharpest narrative arc, name the wedge, and convert messy idea/context into executive slide beats."
   },
   {
     id: "evidence",
-    label: "Gbrain Evidence Miner",
+    label: "Knowledge Evidence Miner",
     system:
-      "You are an enterprise evidence miner. Extract concrete proof points, useful caveats, and artifacts from supplied gbrain or Supabase context. Do not invent evidence."
+      "You are an enterprise evidence miner. Extract concrete proof points, useful caveats, and artifacts from supplied knowledge or Supabase context. Do not invent evidence."
   },
   {
     id: "visual",
@@ -36,7 +36,7 @@ export const agentPrompts: AgentPrompt[] = [
     id: "critic",
     label: "Hackathon Critic",
     system:
-      "You are a hackathon judge. Find what will win: Cerebras speed in action, Gemma 4 multimodality, multi-agent collaboration, enterprise impact, and a demo that is clear in 60 seconds."
+      "You are a hackathon judge. Find what will win: Cerebras speed in action, Gemma 4 multimodality, multi-agent collaboration, enterprise impact, and a product story that is immediately clear."
   }
 ];
 
@@ -53,8 +53,8 @@ export function buildAgentUserPrompt(input: GenerateRequest, feedbackMemory: str
     "Interactive brainstorm notes:",
     input.brainstormNotes || "(none)",
     "",
-    "Gbrain/Supabase context:",
-    input.gbrainContext || "(none supplied)",
+    "Knowledge/Supabase context:",
+    input.sourceContext || "(none supplied)",
     "",
     "Feedback memory to incorporate:",
     feedbackMemory || "(none yet)",
@@ -72,8 +72,8 @@ export function buildSynthesisPrompt(input: GenerateRequest, agentJson: string, 
     "- The 10 slides must use these 10 distinct outline formats in order:",
     formatOutlineStylePrompt(),
     "- The deck must showcase Cerebras speed and Gemma 4 31B as central to the product.",
-    "- The app concept is: idea/context plus gbrain output plus interactive brainstorming to slide outline to Figma Slides.",
-    "- Make the deck useful for a 60-second hackathon demo.",
+    "- The app concept is: idea/context plus knowledge output plus interactive brainstorming to slide outline to Figma Slides.",
+    "- Make the deck useful for live hackathon review and later product inspection.",
     "- Each slide has one job, one headline claim, concrete visual direction, and speaker notes.",
     "- Each slide's formatRequirement, informationArchitecture, designDirective, and evalCriteria must dictate its Figma design.",
     "- Use the feedback memory as a product improvement signal.",
