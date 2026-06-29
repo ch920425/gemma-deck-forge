@@ -691,8 +691,8 @@ function styleBackedBeat(index: number) {
   };
 }
 
-function cleanText(value: string): string {
-  return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+function cleanText(value: unknown): string {
+  return String(value || "").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function stageSummary(phase: FigmaSlideBuildStage["phase"], title: string): string {

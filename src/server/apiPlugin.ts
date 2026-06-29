@@ -7,7 +7,7 @@ import { callCerebrasJson, fallbackBrainstorm, hasCerebrasKey } from "./cerebras
 import { runContextSwarm } from "./contextSwarm";
 import { generateDeck, polishDeck } from "./deck";
 import { readFeedbackEntries, readFeedbackMemory, saveFeedback } from "./feedbackStore";
-import { getFigmaBridgeServer } from "./figmaBridge";
+import { detectEstablishedFigmaBridgePorts, getFigmaBridgeServer } from "./figmaBridge";
 import { runGbrainQuery } from "./gbrain";
 import { runBrainstormSwarm, runContextWritingSwarm } from "./textSwarms";
 
@@ -16,7 +16,6 @@ export function gemmaDeckApiPlugin(): Plugin {
     name: "gemma-deck-api",
     configureServer(server) {
       const figmaBridge = getFigmaBridgeServer();
-      void figmaBridge.start().catch(() => undefined);
       server.httpServer?.once("close", () => {
         void figmaBridge.stop();
       });
@@ -183,8 +182,20 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
 
   if (req.method === "GET" && url.pathname === "/api/figma/status") {
     const bridge = getFigmaBridgeServer();
-    await bridge.start();
-    sendJson(res, 200, bridge.status());
+    const status = bridge.status();
+    const detectedPorts = status.connected ? [] : await detectEstablishedFigmaBridgePorts();
+    const figmaConsoleConnected = !status.connected && detectedPorts.length > 0;
+    sendJson(res, 200, {
+      ...status,
+      ok: status.ok || figmaConsoleConnected,
+      connected: status.connected || figmaConsoleConnected,
+      port: figmaConsoleConnected ? detectedPorts[detectedPorts.length - 1] : status.port,
+      detectedFigmaPorts: detectedPorts,
+      message:
+        figmaConsoleConnected
+          ? `Connected via Figma Console bridge on port ${detectedPorts[detectedPorts.length - 1]} (${detectedPorts.join(", ")} detected).`
+          : status.message
+    });
     return;
   }
 

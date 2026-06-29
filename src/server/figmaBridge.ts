@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { Socket } from "node:net";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { FigmaBridgeStatus } from "../shared/schema";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const DEFAULT_PORT_RANGE = Array.from({ length: 10 }, (_, index) => 9223 + index);
+const execFileAsync = promisify(execFile);
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -291,6 +294,25 @@ export function getFigmaBridgeServer(): FigmaBridgeServer {
     });
   }
   return singleton;
+}
+
+export async function detectEstablishedFigmaBridgePorts(): Promise<number[]> {
+  const ports = new Set<number>();
+  try {
+    const { stdout } = await execFileAsync("lsof", [
+      "-nP",
+      "-iTCP:9223-9232"
+    ]);
+    for (const line of stdout.split("\n")) {
+      if (!line.includes("ESTABLISHED")) continue;
+      if (!/^Figma\\x20|^Figma\s/.test(line)) continue;
+      const match = line.match(/->(?:\[::1\]|127\.0\.0\.1|localhost):(\d+)/);
+      if (match) ports.add(Number(match[1]));
+    }
+  } catch {
+    return [];
+  }
+  return [...ports].sort((a, b) => a - b);
 }
 
 export function resetFigmaBridgeServerForTests(): void {
