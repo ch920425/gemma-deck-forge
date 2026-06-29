@@ -1,56 +1,88 @@
 # Gemma Deck Forge
 
-Gemma Deck Forge turns a rough idea into a polished Figma Slides deck with a visible swarm of Gemma 4 31B agents running on Cerebras. The product emphasizes what high-throughput inference changes: instead of waiting for one slow model call, users can see context writers, brainstormers, slide planners, Figma builders, and visual QA agents working in parallel.
+Gemma Deck Forge turns a rough idea into a polished, editable Figma deck with a swarm of Cerebras-powered Gemma 4 31B agents. The workflow is built around visible parallel work: context retrieval, brainstorm synthesis, slide outlining, Figma generation, screenshot-based review, and targeted repair loops.
 
-## Why It Matters
+[Watch the 60-second demo](https://www.loom.com/share/3bbedfe9f48c4511a5c635e63b444ff4) · [Open the demo slides PDF](demo_video_slides.pdf) · [Read the benchmark notes](BENCHMARKS.md)
 
-Most slide tools hide the hard work behind a spinner. Gemma Deck Forge makes the work inspectable: agents retrieve context, write a concise brief, brainstorm multiple angles, draft a varied slide outline, generate the deck in Figma, and run visual QA loops that diagnose and fix layout issues. Cerebras speed makes those loops interactive enough for a creative workflow instead of a background batch job.
+![Generated Figma deck sample](docs/assets/demo-slide-grid.png)
 
-For enterprise teams, this is a pattern for high-speed knowledge work: private context can stay local or inside the user's own data systems, while agent swarms transform it into presentation-ready artifacts with reviewable intermediate traces.
+## What It Does
 
-## Features
+Gemma Deck Forge starts with a simple braindump, then sends specialized agents through a staged workflow:
 
-- Step-by-step workflow: braindump, context gathering, brainstorming, outline generation, Figma generation, QA polish, and manual feedback.
-- Parallel context lanes with optional adapters for a Supabase-backed knowledge table and a local Markdown notes folder.
-- Five brainstorming agents with different angles, plus eval/fix loops that tighten the final brief before slide planning.
-- Ten distinct slide-outline formats so the deck does not look like one repeated template.
-- Figma Desktop Bridge integration for live slide creation and follow-up QA edits.
-- Per-slide QA loop designed around export, visual diagnosis, structured fix instructions, bridge execution, and repeat-until-pass behavior.
-- Local feedback memory so later runs can preserve the user's preferences without sending extra configuration to the repo.
+- retrieve and tighten relevant context;
+- brainstorm multiple narrative angles;
+- convert the strongest direction into a varied slide outline;
+- generate native Figma Slides through a local desktop bridge;
+- inspect slide screenshots for hierarchy, spacing, copy density, brand fit, and visual defects;
+- produce concrete repair instructions and execute follow-up Figma edits.
 
-## Project Guidance
+The important product shift is that deck generation becomes an interactive multi-agent workspace instead of a one-shot prompt. Users can see agents working in parallel, inspect intermediate artifacts, and send manual feedback back into the same QA loop.
 
-- [Agent guide](AGENTS.md)
-- [Install skill](skills/install/SKILL.md)
-- [Public release skill](skills/public-release/SKILL.md)
-- [Product requirements](docs/product-requirements.md)
-- [Technical architecture](docs/technical-architecture.md)
+## Why Cerebras Matters
+
+Most agentic creative tools are bottlenecked by sequential model calls. Gemma Deck Forge is designed for a different inference shape: 10-30 small, specialized Gemma 4 31B agents can collaborate at once because Cerebras keeps latency and throughput low enough for the work to feel live.
+
+That changes the UX. A slide deck can be drafted, critiqued, repaired, and re-reviewed while the user is still in flow. The system does not depend on one huge prompt getting everything right; it uses many fast loops to improve the story, content, layout, and polish.
+
+## Enterprise Fit
+
+Slides are still a high-friction enterprise artifact: interns, PMs, executives, engineers, sales teams, and customer teams all need clear decks on short notice, but the work is context-heavy, brand-sensitive, and easy to get wrong. Gemma Deck Forge treats that as an enterprise knowledge workflow rather than a template problem.
+
+The app keeps private context adapters optional, turns retrieved source material into inspectable intermediate artifacts, and writes to an editable Figma deck instead of a locked export. That makes the workflow practical for real teams: fast enough for live iteration, structured enough for review, and flexible enough to preserve a team's visual system and narrative standards.
+
+## Multimodal Design Loop
+
+Gemma is used for more than writing copy. The system can study reference decks, example screenshots, and generated slide images to infer layout patterns, visual hierarchy, color usage, component grammar, and narrative structure. After generation, per-slide reviewer agents look at the actual rendered result, return pass/fail structured feedback, and translate issues into surgical Figma bridge actions.
+
+This makes the deck editable and inspectable at every step: the output is a real Figma artifact, not a flattened image or a locked presentation export.
+
+## Demo
+
+- Demo video: [Loom walkthrough](https://www.loom.com/share/3bbedfe9f48c4511a5c635e63b444ff4)
+- Demo deck PDF: [demo_video_slides.pdf](demo_video_slides.pdf)
+- Rendered slide examples from the demo deck:
+
+| Opening | Workflow | Final Handoff |
+| --- | --- | --- |
+| ![Demo slide 1](docs/assets/demo-slides/slide-01.png) | ![Demo slide 5](docs/assets/demo-slides/slide-05.png) | ![Demo slide 10](docs/assets/demo-slides/slide-10.png) |
+
+## Benchmark Snapshot
+
+The benchmark compares the full staged agent workflow, not a single isolated prompt. In this run, Cerebras-powered Gemma 4 31B completed the end-to-end slide-prep workflow in 54 seconds while preserving ten parallel agent lanes.
+
+![End-to-end workflow time benchmark](docs/assets/benchmark-workflow-time.png)
+
+![Headline benchmark results](docs/assets/benchmark-headline-results.png)
+
+See [BENCHMARKS.md](BENCHMARKS.md) for methodology, TTFT, throughput, shared timeline, context-window results, and caveats.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  A["React + Vite workflow UI"] --> B["Vite local API plugin"]
-  B --> C["Cerebras Gemma 4 31B agents"]
+  A["React + Vite workflow UI"] --> B["Local API routes"]
+  B --> C["Cerebras Gemma 4 31B agent swarm"]
   B --> D["Optional context adapters"]
-  D --> D1["Supabase SQL adapter"]
-  D --> D2["Local Markdown search via ripgrep"]
-  B --> E["Deck planner + outline eval loops"]
-  E --> F["Figma build plan"]
-  F --> G["Figma Desktop Bridge WebSocket"]
-  G --> H["Open Figma Slides file"]
-  H --> I["Per-slide visual QA and fix loops"]
-  I --> G
+  D --> D1["SQL-backed knowledge source"]
+  D --> D2["Local Markdown search"]
+  C --> E["Context brief + brainstorm loops"]
+  E --> F["Slide outline + eval loops"]
+  F --> G["Figma build plan"]
+  G --> H["Figma Desktop Bridge"]
+  H --> I["Open Figma Slides file"]
+  I --> J["Screenshot QA + repair planning"]
+  J --> H
 ```
 
 Core code paths:
 
-- `src/App.tsx`: staged UI, SSE event handling, Figma action logs, feedback UI.
-- `src/server/apiPlugin.ts`: local API routes for context, generation, feedback, Figma build, and Figma QA.
+- `src/App.tsx`: staged UI, server-sent events, Figma action logs, and feedback UI.
+- `src/server/apiPlugin.ts`: local API routes for context, brainstorming, outline generation, Figma build, QA, and feedback.
 - `src/server/cerebras.ts`: Cerebras chat-completions client with key fallback and error redaction.
 - `src/server/contextSwarm.ts`: parallel context workflows and optional local retrieval adapters.
 - `src/server/deck.ts`: brainstorming, outline generation, eval/fix loops, and deterministic fallback content.
-- `src/server/figmaBridge.ts`: local WebSocket bridge transport to the Figma Desktop plugin.
+- `src/server/figmaBridge.ts`: WebSocket transport to the local Figma Desktop Bridge plugin.
 - `src/shared/figma.ts`: Figma build-plan and QA execution script generation.
 
 ## Requirements
@@ -58,9 +90,9 @@ Core code paths:
 - Node.js 20 or newer
 - npm
 - A Cerebras API key with Gemma 4 31B access
-- Figma Desktop for live deck generation
-- The Figma Desktop Bridge plugin installed in Figma Desktop for live mutations
-- Optional: Supabase CLI for the SQL context adapter
+- Figma Desktop
+- Figma Desktop Bridge plugin installed in Figma Desktop
+- Optional: Supabase CLI for a SQL context adapter
 - Optional: `ripgrep` (`rg`) for fast local Markdown search
 
 ## Quick Start
@@ -73,7 +105,7 @@ cp .env.example .env
 npm run setup:check
 ```
 
-Edit `.env` and add at least:
+Edit `.env` and add your provider credentials:
 
 ```bash
 CEREBRAS_API_KEY=your_cerebras_key_here
@@ -92,6 +124,22 @@ Open the printed local URL, usually:
 http://127.0.0.1:5174/
 ```
 
+## Figma Desktop Bridge
+
+1. Open Figma Desktop.
+2. Open or create a Figma Slides file.
+3. Run the Figma Desktop Bridge plugin from `Plugins -> Development`.
+4. Confirm the plugin shows `READY`.
+5. In the web app, complete context, brainstorming, and outline stages.
+6. Click `Generate Figma Deck`.
+7. Click `Run Figma QA Loop` to inspect screenshots and apply repair passes to the generated slides.
+
+The bridge defaults to port `9223`. If you change it, set the matching environment variable before starting the app:
+
+```bash
+GEMMA_FIGMA_BRIDGE_PORT=9223 npm run dev -- --port 5174
+```
+
 ## Supporting CLI
 
 ```bash
@@ -104,7 +152,7 @@ The CLI prints setup guidance, validates local prerequisites, and scans committe
 
 ## Optional Context Setup
 
-Gemma Deck Forge runs without private context adapters by using built-in fallback context. To connect your own sources, configure these optional environment variables in `.env`:
+Gemma Deck Forge works without private context sources by using built-in fallback context. To connect your own sources, configure optional adapters in `.env`:
 
 ```bash
 KNOWLEDGE_SUPABASE_WORKDIR=/path/to/your/supabase/project
@@ -112,26 +160,11 @@ KNOWLEDGE_SUPABASE_DB_URL=postgresql://...
 LOCAL_NOTES_PATH=/path/to/markdown/notes
 ```
 
-Do not commit `.env`. The file is ignored by git.
-
-## Figma Desktop Bridge Setup
-
-1. Open Figma Desktop.
-2. Open or create a Figma Slides file.
-3. Run the Figma Desktop Bridge plugin from `Plugins -> Development`.
-4. Confirm the plugin shows `READY`.
-5. In the web app, move through the workflow and click `Generate Figma Deck`.
-6. After generation completes, click `Run Figma QA Loop` to polish the generated slides.
-
-The bridge defaults to port `9223`. If you change it, set the matching environment variable before starting the app:
-
-```bash
-GEMMA_FIGMA_BRIDGE_PORT=9223 npm run dev -- --port 5174
-```
+Do not commit `.env`. It is ignored by git.
 
 ## Verification
 
-Recommended checks before submitting or deploying:
+Recommended checks before publishing changes:
 
 ```bash
 npm run lint
@@ -160,15 +193,12 @@ npm run test:live
 - Context adapters are opt-in; no personal knowledge-base path or account identifier is hardcoded.
 - Provider errors are redacted before they reach the UI or logs.
 - The Figma bridge runs locally and mutates only the open Figma file where the plugin is active.
-- Before making the repository public, run a credential scanner and a private-path scan against the committed tree. Keep local `.env` files and generated outputs out of git.
+- Before making release changes public, run the project scanner and a private-path scan against the committed tree.
 
-## Core Workflow
+## Project Guidance
 
-1. Braindump a rough idea.
-2. Retrieve and tighten context with parallel agents.
-3. Brainstorm the deck structure through multiple agentic loops.
-4. Generate a varied ten-slide outline.
-5. Build the Figma deck live.
-6. Run the visual QA loop and submit manual feedback for another polish pass.
-
-The core product takeaway: Cerebras makes many small agent decisions fast enough to become part of the user experience, while the Figma bridge and QA loops keep the final artifact inspectable.
+- [Agent guide](AGENTS.md)
+- [Install skill](skills/install/SKILL.md)
+- [Public release skill](skills/public-release/SKILL.md)
+- [Product requirements](docs/product-requirements.md)
+- [Technical architecture](docs/technical-architecture.md)
