@@ -57,15 +57,16 @@ describe("deck normalization", () => {
       audience: "impatient judges",
       brainstormNotes: "stronger opener",
       gbrainContext: "source proof",
-      slideCount: 3
+      slideCount: 10
     });
   });
 
   it("normalizes a partial slide into a Figma-safe slide spec", () => {
     const slide = normalizeSlide({ title: "A", layout: "metric", bullets: ["one", "two"] }, 2);
     expect(slide.id).toBe("s3");
-    expect(slide.layout).toBe("metric");
-    expect(slide.visual).toContain("visual");
+    expect(slide.layout).toBe("evidence");
+    expect(slide.formatId).toBe("context-map");
+    expect(slide.visual).toContain("Speak");
   });
 
   it("sanitizes unsafe slide fields into reliable defaults", () => {
@@ -85,11 +86,12 @@ describe("deck normalization", () => {
       1
     );
     expect(slide.id).toBe("s2");
-    expect(slide.title).toBe("Slide 2");
-    expect(slide.headline).toBe("Make the product value obvious.");
+    expect(slide.title).toBe("Stakes Thesis");
+    expect(slide.headline).toContain("Cerebras");
     expect(slide.bullets).toEqual([]);
     expect(slide.evidence).toEqual([]);
-    expect(slide.layout).toBe("evidence");
+    expect(slide.layout).toBe("thesis");
+    expect(slide.formatRequirement).toContain("slow batch generation");
     expect(slide.accent).toMatch(/^#[0-9A-F]{6}$/i);
   });
 
@@ -103,8 +105,9 @@ describe("deck normalization", () => {
     });
     const fallback = normalizeDeck(null, input);
     expect(fallback.title).toBe("Gemma Deck Forge");
-    expect(fallback.slides).toHaveLength(3);
-    expect(fallback.figmaSpec.slides).toHaveLength(3);
+    expect(fallback.slides).toHaveLength(10);
+    expect(fallback.figmaSpec.slides).toHaveLength(10);
+    expect(new Set(fallback.slides.map((slide) => slide.formatId)).size).toBe(10);
 
     const explicit = normalizeDeck(
       {
@@ -119,7 +122,7 @@ describe("deck normalization", () => {
     );
     expect(explicit.narrativeArc).toEqual(["one", "two", "three", "four", "five", "six"]);
     expect(explicit.demoScript).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
-    expect(explicit.slides).toHaveLength(3);
+    expect(explicit.slides).toHaveLength(10);
   });
 });
 
@@ -194,6 +197,18 @@ describe("figma handoff", () => {
     expect(plan.script).toContain("actionsPerSecond");
     expect(plan.script).toContain("figma.createSection");
     expect(plan.script).toContain("actionDelayMs");
+    expect(plan.script).toContain("maxBottom");
+    expect(plan.script).toContain("referenceFrames");
+    expect(plan.script).toContain("exportAsync");
+    expect(plan.script).toContain("imageHash");
+    expect(plan.script).toContain("renderBeforeAfter");
+    expect(plan.script).toContain("renderMetric");
+    expect(plan.script).toContain("renderArtifact");
+    expect(plan.script).toContain("Critique / Fix Pass");
+    expect(plan.script).toContain("rendererByFormat");
+    expect(plan.script).toContain("Speak source asset");
+    expect(plan.script).toContain("The system escapes the identical-slide trap");
+    expect(() => new Function("(async function() {\n" + plan.script + "\n})()")).not.toThrow();
   });
 });
 

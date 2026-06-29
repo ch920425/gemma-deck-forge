@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AgentFinding, BrainstormResponse, DeckSpec, GbrainHit } from "./shared/schema";
-import type { FigmaBuildPlan, FigmaSlideBuildStage } from "./shared/schema";
+import type { FigmaBridgeStatus, FigmaBuildPlan, FigmaBuildResponse, FigmaSlideBuildStage } from "./shared/schema";
 
 interface AgentState {
   label: string;
@@ -38,7 +38,7 @@ const starterIdea =
 export function App() {
   const [idea, setIdea] = useState(starterIdea);
   const [audience, setAudience] = useState("Cerebras x Gemma hackathon judges and enterprise AI buyers");
-  const [slideCount, setSlideCount] = useState(6);
+  const [slideCount, setSlideCount] = useState(10);
   const [gbrainQuery, setGbrainQuery] = useState("Gemma Cerebras Figma slide deck agentic gbrain");
   const [gbrainHits, setGbrainHits] = useState<GbrainHit[]>([]);
   const [gbrainStatus, setGbrainStatus] = useState("idle");
@@ -52,9 +52,30 @@ export function App() {
   const [figmaPrompt, setFigmaPrompt] = useState("");
   const [figmaBuildPlan, setFigmaBuildPlan] = useState<FigmaBuildPlan | null>(null);
   const [figmaStages, setFigmaStages] = useState<FigmaSlideBuildStage[]>([]);
+  const [figmaStatus, setFigmaStatus] = useState<FigmaBridgeStatus | null>(null);
+  const [figmaResult, setFigmaResult] = useState("");
+  const [figmaBusy, setFigmaBusy] = useState(false);
   const [feedback, setFeedback] = useState({ rating: 5, keep: "", change: "", notes: "" });
   const [feedbackMemory, setFeedbackMemory] = useState("");
   const deckJson = useMemo(() => (deck ? JSON.stringify(deck.figmaSpec, null, 2) : ""), [deck]);
+  const visibleAgentIds = useMemo(() => {
+    const preferred = [
+      "story",
+      "evidence",
+      "visual",
+      "figma",
+      "critic",
+      "outline_categorizer",
+      "outline_writer",
+      "outline_eval_clock",
+      "synthesizer",
+      "polisher"
+    ];
+    const extras = Object.keys(agents)
+      .filter((id) => !preferred.includes(id))
+      .sort((a, b) => a.localeCompare(b));
+    return [...preferred, ...extras];
+  }, [agents]);
 
   async function runGbrain() {
     setGbrainStatus("swarm running");
@@ -103,6 +124,8 @@ export function App() {
     setFigmaPrompt("");
     setFigmaBuildPlan(null);
     setFigmaStages([]);
+    setFigmaStatus(null);
+    setFigmaResult("");
     setAgents({});
     await postSse(
       "/api/generate/stream",
@@ -125,26 +148,72 @@ export function App() {
 
   async function exportFigma() {
     if (!deck) return;
-    const response = await fetch("/api/export/figma", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deck })
-    });
-    const payload = await response.json();
-    setFigmaPrompt(payload.handoffPrompt || "");
+    setFigmaBusy(true);
+    setFigmaResult("Preparing Figma handoff...");
+    try {
+      const response = await fetch("/api/export/figma", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deck })
+      });
+      const payload = await response.json();
+      setFigmaPrompt(payload.handoffPrompt || "");
+      const status = await getFigmaStatus();
+      setFigmaResult(status.connected ? `Handoff ready for ${status.fileName}.` : status.message);
+    } catch (error) {
+      setFigmaResult(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFigmaBusy(false);
+    }
   }
 
   async function prepareFigmaBuild() {
     if (!deck) return;
-    const response = await fetch("/api/figma/build-plan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deck })
-    });
-    const payload = (await response.json()) as FigmaBuildPlan;
-    setFigmaBuildPlan(payload);
-    setFigmaPrompt(payload.script);
-    setFigmaStages(payload.stages);
+    setFigmaBusy(true);
+    setFigmaResult("Sending generated finalizer to Figma Desktop Bridge...");
+    try {
+      const response = await fetch("/api/figma/build-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deck })
+      });
+      const payload = (await response.json()) as FigmaBuildPlan;
+      setFigmaBuildPlan(payload);
+      setFigmaPrompt(payload.script);
+      setFigmaStages(payload.stages);
+      runFigmaStageAnimation();
+      const buildResponse = await fetch("/api/figma/build", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deck })
+      });
+      const buildPayload = (await buildResponse.json()) as FigmaBuildResponse;
+      setFigmaStatus(buildPayload.status);
+      if (buildPayload.ok) {
+        const metrics = buildPayload.result as { result?: { actionCount?: number; actionsPerSecond?: number; slideCount?: number } };
+        const result = metrics.result || {};
+        setFigmaResult(
+          `Built ${result.slideCount || 10} slides in Figma with ${result.actionCount || 50} visible actions at ${result.actionsPerSecond || "?"}/sec.`
+        );
+        setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: "done" })));
+      } else {
+        setFigmaResult(buildPayload.error || buildPayload.status.message);
+      }
+    } catch (error) {
+      setFigmaResult(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFigmaBusy(false);
+    }
+  }
+
+  async function getFigmaStatus() {
+    const response = await fetch("/api/figma/status");
+    const status = (await response.json()) as FigmaBridgeStatus;
+    setFigmaStatus(status);
+    return status;
+  }
+
+  function runFigmaStageAnimation() {
     const phases = ["build", "review", "revise", "polish", "finalize"];
     phases.forEach((phase, phaseIndex) => {
       window.setTimeout(() => {
@@ -157,7 +226,7 @@ export function App() {
                 : stage
           )
         );
-      }, 260 * (phaseIndex + 1));
+      }, 1800 * (phaseIndex + 1));
     });
   }
 
@@ -216,7 +285,18 @@ export function App() {
       setAgents((prev) => ({ ...prev, polisher: { label: "Parallel Slide Polish", status: "done" } }));
       return;
     }
+    if (event === "synthesis_started") {
+      setAgents((prev) => ({
+        ...prev,
+        synthesizer: { label: "Final Synthesis", status: "running", summary: "Merging swarm output into the final ten-format deck." }
+      }));
+      return;
+    }
     if (event === "deck_complete") {
+      setAgents((prev) => ({
+        ...prev,
+        synthesizer: { label: "Final Synthesis", status: "done", summary: "Final outline is locked and ready for Figma design." }
+      }));
       setDeck(payload as DeckSpec);
     }
   }
@@ -306,9 +386,10 @@ export function App() {
               <span>Slides</span>
               <input
                 type="number"
-                min={3}
+                min={10}
                 max={10}
                 value={slideCount}
+                readOnly
                 onChange={(event) => setSlideCount(Number(event.target.value))}
               />
             </label>
@@ -376,7 +457,7 @@ export function App() {
           ) : null}
 
           <div className="agentBoard">
-            {["story", "evidence", "visual", "figma", "critic", "polisher"].map((id) => {
+            {visibleAgentIds.map((id) => {
               const agent = agents[id];
               return (
                 <article key={id} className={`agentLane ${agent?.status || "idle"}`}>
@@ -420,31 +501,39 @@ export function App() {
                   <h2>{deck.title}</h2>
                   <p>{deck.thesis}</p>
                 </div>
-                <button className="iconButton" onClick={exportFigma}>
+                <button className="iconButton" onClick={exportFigma} disabled={figmaBusy}>
                   <Figma size={18} />
                   Figma handoff
                 </button>
-                <button className="iconButton" onClick={prepareFigmaBuild}>
+                <button className="iconButton" onClick={prepareFigmaBuild} disabled={figmaBusy}>
                   <Zap size={18} />
-                  Build in Figma
+                  {figmaBusy ? "Figma working" : "Build in Figma"}
                 </button>
               </section>
 
-              {figmaBuildPlan ? (
+              {figmaBuildPlan || figmaStatus || figmaResult ? (
                 <section className="figmaBuildPanel">
                   <div>
-                    <p className="eyebrow">Desktop Bridge plan</p>
+                    <p className="eyebrow">Desktop Bridge</p>
                     <h2>Parallel Figma Finalizer</h2>
+                    {figmaStatus ? (
+                      <p className={`bridgeStatus ${figmaStatus.connected ? "connected" : "waiting"}`}>
+                        {figmaStatus.message}
+                      </p>
+                    ) : null}
+                    {figmaResult ? <p className="bridgeResult">{figmaResult}</p> : null}
                   </div>
-                  <div className="stageGrid">
-                    {figmaStages.map((stage) => (
-                      <article key={`${stage.phase}-${stage.slideId}`} className={`stageCard ${stage.status}`}>
-                        <span>{stage.phase}</span>
-                        <strong>{stage.title}</strong>
-                        <p>{stage.summary}</p>
-                      </article>
-                    ))}
-                  </div>
+                  {figmaStages.length ? (
+                    <div className="stageGrid">
+                      {figmaStages.map((stage) => (
+                        <article key={`${stage.phase}-${stage.slideId}`} className={`stageCard ${stage.status}`}>
+                          <span>{stage.phase}</span>
+                          <strong>{stage.title}</strong>
+                          <p>{stage.summary}</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
                 </section>
               ) : null}
 
@@ -452,9 +541,22 @@ export function App() {
                 {deck.slides.map((slide, index) => (
                   <article className="slideCard" key={slide.id} style={{ borderTopColor: slide.accent }}>
                     <div className="slideNumber">{String(index + 1).padStart(2, "0")}</div>
-                    <p className="layout">{slide.layout}</p>
+                    <p className="layout">{slide.formatLabel || slide.layout}</p>
                     <h3>{slide.headline}</h3>
                     <p>{slide.body}</p>
+                    {slide.formatRequirement ? (
+                      <div className="slideRequirement">
+                        <strong>Requirement</strong>
+                        <span>{slide.formatRequirement}</span>
+                      </div>
+                    ) : null}
+                    {slide.informationArchitecture?.length ? (
+                      <div className="infoArchitecture">
+                        {slide.informationArchitecture.map((item) => (
+                          <span key={item}>{item}</span>
+                        ))}
+                      </div>
+                    ) : null}
                     <ul>
                       {slide.bullets.map((bullet) => (
                         <li key={bullet}>{bullet}</li>
@@ -462,8 +564,18 @@ export function App() {
                     </ul>
                     <div className="visual">
                       <Layers3 size={16} />
-                      {slide.visual}
+                      <span>
+                        {slide.visual}
+                        {slide.designDirective ? <em>{slide.designDirective}</em> : null}
+                      </span>
                     </div>
+                    {slide.evalCriteria?.length ? (
+                      <div className="evalCriteria">
+                        {slide.evalCriteria.map((criterion) => (
+                          <span key={criterion}>{criterion}</span>
+                        ))}
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </section>

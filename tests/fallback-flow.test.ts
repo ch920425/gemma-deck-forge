@@ -10,7 +10,7 @@ import {
   parseJsonFromText,
   tokensPerSecond
 } from "../src/server/cerebras";
-import { generateDeck, polishDeck, synthesizeDeck } from "../src/server/deck";
+import { generateDeck, polishDeck, runOutlineDesignSwarm, summariseOutlinePayload, synthesizeDeck } from "../src/server/deck";
 import { runGbrainQuery } from "../src/server/gbrain";
 import { buildAgentUserPrompt, buildBrainstormPrompt, buildSynthesisPrompt } from "../src/shared/prompts";
 import type { AgentFinding, GenerateRequest } from "../src/shared/schema";
@@ -19,6 +19,7 @@ let previousPrimary: string | undefined;
 let previousBackup: string | undefined;
 let previousKeyList: string | undefined;
 let previousDataDir: string | undefined;
+let previousEvalMs: string | undefined;
 let dataDir = "";
 
 const input: GenerateRequest = {
@@ -34,6 +35,7 @@ beforeEach(async () => {
   previousBackup = process.env.CEREBRAS_BACKUP_API_KEY;
   previousKeyList = process.env.CEREBRAS_API_KEYS;
   previousDataDir = process.env.GEMMA_DECK_DATA_DIR;
+  previousEvalMs = process.env.GEMMA_OUTLINE_EVAL_MS;
   delete process.env.CEREBRAS_API_KEY;
   delete process.env.CEREBRAS_BACKUP_API_KEY;
   delete process.env.CEREBRAS_API_KEYS;
@@ -46,6 +48,7 @@ afterEach(async () => {
   restoreEnv("CEREBRAS_BACKUP_API_KEY", previousBackup);
   restoreEnv("CEREBRAS_API_KEYS", previousKeyList);
   restoreEnv("GEMMA_DECK_DATA_DIR", previousDataDir);
+  restoreEnv("GEMMA_OUTLINE_EVAL_MS", previousEvalMs);
   await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -85,9 +88,12 @@ describe("fallback generation flow", () => {
   it("generates a complete deck through real fallback paths and stream events", async () => {
     const events: string[] = [];
     const deck = await generateDeck(input, (event) => events.push(event));
-    expect(deck.slides).toHaveLength(5);
-    expect(deck.figmaSpec.slides).toHaveLength(5);
+    expect(deck.slides).toHaveLength(10);
+    expect(deck.figmaSpec.slides).toHaveLength(10);
+    expect(new Set(deck.slides.map((slide) => slide.formatId)).size).toBe(10);
     expect(events.filter((event) => event === "agent_error")).toHaveLength(5);
+    expect(events.filter((event) => event === "agent_started").length).toBeGreaterThanOrEqual(18);
+    expect(events.filter((event) => event === "agent_complete").length).toBeGreaterThanOrEqual(13);
     expect(events).toContain("deck_complete");
   });
 
@@ -107,7 +113,8 @@ describe("fallback generation flow", () => {
       risks: []
     };
     const deck = await synthesizeDeck({ ...input, slideCount: 6 }, [finding], "keep speed visible");
-    expect(deck.slides.at(-1)?.bullets).toContain("Fast parallel proof");
+    expect(deck.slides).toHaveLength(10);
+    expect(JSON.stringify(deck.slides)).toContain("Fast parallel proof");
     expect(deck.thesis).toContain("Cerebras speed");
   });
 
@@ -120,6 +127,28 @@ describe("fallback generation flow", () => {
     expect(events).toContain("polish_error");
     expect(events).toContain("deck_complete");
   });
+
+  it("runs the ten-format outline eval/fix swarm with a configured eval window", async () => {
+    process.env.GEMMA_OUTLINE_EVAL_MS = "120";
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const outlineContext = await runOutlineDesignSwarm(input, [fallbackAgentFinding("story", "Story")], "", (event, payload) =>
+      events.push({ event, payload })
+    );
+    const parsed = JSON.parse(outlineContext) as { fixes: Array<{ formatId: string }> };
+    expect(parsed.fixes).toHaveLength(10);
+    expect(new Set(parsed.fixes.map((fix) => fix.formatId)).size).toBe(10);
+    expect(events.filter((item) => item.event === "agent_complete").length).toBeGreaterThanOrEqual(13);
+    expect(outlineContext).toContain("operator-close");
+  });
+
+  it("recovers from provider errors during outline categorization without stopping eval/fix", async () => {
+    process.env.CEREBRAS_API_KEY = "csk-invalidcredentialforoutlinefallback";
+    process.env.GEMMA_OUTLINE_EVAL_MS = "40";
+    const outlineContext = await runOutlineDesignSwarm(input, [fallbackAgentFinding("visual", "Visual")], "", () => undefined);
+    expect(outlineContext).toContain("Cerebras API");
+    expect(outlineContext).toContain("operator-close");
+    expect(JSON.parse(outlineContext).fixes).toHaveLength(10);
+  }, 30_000);
 });
 
 describe("prompt and CLI integration surfaces", () => {
@@ -155,6 +184,11 @@ describe("prompt and CLI integration surfaces", () => {
     expect(result.ok).toBe(false);
     expect(result.error || result.raw).toBeTruthy();
   }, 30_000);
+
+  it("summarizes outline payloads with a fallback for empty values", () => {
+    expect(summariseOutlinePayload(null, "fallback summary")).toBe("fallback summary");
+    expect(summariseOutlinePayload({ ok: true, items: ["a", "b"] }, "fallback summary")).toContain('"ok":true');
+  });
 });
 
 function restoreEnv(key: string, value: string | undefined): void {

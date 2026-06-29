@@ -7,12 +7,19 @@ import { callCerebrasJson, fallbackBrainstorm, hasCerebrasKey } from "./cerebras
 import { runContextSwarm } from "./contextSwarm";
 import { generateDeck, polishDeck } from "./deck";
 import { readFeedbackEntries, readFeedbackMemory, saveFeedback } from "./feedbackStore";
+import { getFigmaBridgeServer } from "./figmaBridge";
 import { runGbrainQuery } from "./gbrain";
 
 export function gemmaDeckApiPlugin(): Plugin {
   return {
     name: "gemma-deck-api",
     configureServer(server) {
+      const figmaBridge = getFigmaBridgeServer();
+      void figmaBridge.start().catch(() => undefined);
+      server.httpServer?.once("close", () => {
+        void figmaBridge.stop();
+      });
+
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith("/api/")) {
           next();
@@ -141,6 +148,13 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/figma/status") {
+    const bridge = getFigmaBridgeServer();
+    await bridge.start();
+    sendJson(res, 200, bridge.status());
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/figma/build-plan") {
     const body = (await readJson(req)) as { deck?: DeckSpec };
     if (!body.deck) {
@@ -148,6 +162,34 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
       return;
     }
     sendJson(res, 200, buildFigmaBuildPlan(body.deck));
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/figma/build") {
+    const body = (await readJson(req)) as { deck?: DeckSpec };
+    if (!body.deck) {
+      sendJson(res, 400, { error: "missing_deck" });
+      return;
+    }
+    const bridge = getFigmaBridgeServer();
+    await bridge.start();
+    const plan = buildFigmaBuildPlan(body.deck);
+    try {
+      const result = await bridge.executeCode(plan.script, 30_000);
+      sendJson(res, 200, {
+        ok: true,
+        status: bridge.status(),
+        plan,
+        result
+      });
+    } catch (error) {
+      sendJson(res, 409, {
+        ok: false,
+        status: bridge.status(),
+        plan,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
     return;
   }
 

@@ -15,6 +15,9 @@ export type SlideLayout =
   | "before-after"
   | "metric"
   | "demo"
+  | "system-map"
+  | "quote"
+  | "artifact"
   | "closing";
 
 export interface GbrainHit {
@@ -49,6 +52,12 @@ export interface SlideSpec {
   evidence: string[];
   visual: string;
   layout: SlideLayout;
+  formatId?: string;
+  formatLabel?: string;
+  formatRequirement?: string;
+  informationArchitecture?: string[];
+  designDirective?: string;
+  evalCriteria?: string[];
   accent: string;
   speakerNotes: string;
 }
@@ -76,8 +85,14 @@ export interface FigmaDeckSpec {
     title: string;
     headline: string;
     layout: SlideLayout;
+    formatId?: string;
+    formatLabel?: string;
+    formatRequirement?: string;
+    informationArchitecture?: string[];
+    designDirective?: string;
+    evalCriteria?: string[];
     blocks: Array<{
-      kind: "headline" | "body" | "bullets" | "evidence" | "visual";
+      kind: "headline" | "body" | "bullets" | "evidence" | "visual" | "requirement" | "design";
       text: string;
     }>;
     notes: string;
@@ -99,6 +114,25 @@ export interface FigmaBuildPlan {
   stages: FigmaSlideBuildStage[];
   checklist: string[];
   target: "figma-design-frames" | "figma-slides";
+}
+
+export interface FigmaBridgeStatus {
+  ok: boolean;
+  serverRunning: boolean;
+  port?: number;
+  connected: boolean;
+  fileName?: string;
+  fileKey?: string;
+  currentPage?: string;
+  message: string;
+}
+
+export interface FigmaBuildResponse {
+  ok: boolean;
+  status: FigmaBridgeStatus;
+  plan?: FigmaBuildPlan;
+  result?: unknown;
+  error?: string;
 }
 
 export interface FeedbackEntry {

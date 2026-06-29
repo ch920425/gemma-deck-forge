@@ -424,6 +424,61 @@ textarea {
   font-size: 14px;
 }
 
+.visual span {
+  display: grid;
+  gap: 6px;
+}
+
+.visual em {
+  color: #53625a;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.slideRequirement {
+  display: grid;
+  gap: 4px;
+  border-left: 4px solid #2d6cdf;
+  border-radius: 6px;
+  background: #f7faff;
+  padding: 9px 10px;
+  color: #2d3c55;
+  font-size: 13px;
+}
+
+.slideRequirement strong {
+  color: #12235d;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.infoArchitecture,
+.evalCriteria {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.infoArchitecture span,
+.evalCriteria span {
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.infoArchitecture span {
+  background: #fff4d9;
+  color: #62440f;
+}
+
+.evalCriteria span {
+  background: #e7f2ee;
+  color: #0e604f;
+}
+
 .feedbackPanel {
   padding: 14px;
 }
@@ -439,6 +494,25 @@ textarea {
 
 .figmaBuildPanel h2 {
   margin: 0 0 12px;
+}
+
+.bridgeStatus,
+.bridgeResult {
+  margin: 10px 0 0;
+  color: #dce7df;
+}
+
+.bridgeStatus.connected {
+  color: #9fd8cc;
+}
+
+.bridgeStatus.waiting {
+  color: #f1c272;
+}
+
+.bridgeResult {
+  font-weight: 700;
+  color: #fffdf7;
 }
 
 .stageGrid {

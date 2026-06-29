@@ -32,13 +32,14 @@ describe("live Cerebras deck generation", () => {
         audience: "hackathon judges",
         brainstormNotes: "Show speed as the product interaction.",
         gbrainContext: "Recovered Figma Desktop Bridge workflow and Supabase gbrain schema.",
-        slideCount: 3
+        slideCount: 10
       },
       (event) => events.push(event)
     );
 
-    expect(deck.slides).toHaveLength(3);
-    expect(deck.figmaSpec.slides).toHaveLength(3);
+    expect(deck.slides).toHaveLength(10);
+    expect(deck.figmaSpec.slides).toHaveLength(10);
+    expect(new Set(deck.slides.map((slide) => slide.formatId)).size).toBe(10);
     expect(events).toContain("deck_complete");
 
     const polished = await polishDeck({

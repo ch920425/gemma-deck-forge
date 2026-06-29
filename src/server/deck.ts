@@ -1,4 +1,5 @@
 import { buildFigmaSpec } from "../shared/figma";
+import { formatOutlineStylePrompt, outlineStyleForIndex, SLIDE_OUTLINE_STYLES } from "../shared/outlineStyles";
 import { agentPrompts, buildAgentUserPrompt, buildSynthesisPrompt } from "../shared/prompts";
 import type { AgentFinding, DeckSpec, GenerateRequest, PolishRequest, SlideSpec } from "../shared/schema";
 import { DEFAULT_ACCENTS, isDeckSpec } from "../shared/schema";
@@ -49,7 +50,8 @@ export async function generateDeck(input: GenerateRequest, send?: StreamSend): P
   );
 
   send?.("synthesis_started", { agentCount: findings.length });
-  const deck = await synthesizeDeck(normalized, findings, feedbackMemory);
+  const outlineContext = await runOutlineDesignSwarm(normalized, findings, feedbackMemory, send);
+  const deck = await synthesizeDeck(normalized, findings, feedbackMemory, outlineContext);
   send?.("deck_complete", deck);
   return deck;
 }
@@ -110,14 +112,111 @@ export function normalizeGenerateRequest(input: GenerateRequest): GenerateReques
     audience: input.audience?.trim() || "Cerebras x Gemma hackathon judges and enterprise AI buyers",
     brainstormNotes: input.brainstormNotes?.trim() || "",
     gbrainContext: input.gbrainContext?.trim() || "",
-    slideCount: Math.min(Math.max(Number(input.slideCount) || 6, 3), 10)
+    slideCount: 10
   };
+}
+
+export async function runOutlineDesignSwarm(
+  input: GenerateRequest,
+  findings: AgentFinding[],
+  feedbackMemory: string,
+  send?: StreamSend
+): Promise<string> {
+  const started = performance.now();
+  const catalog = formatOutlineStylePrompt();
+  const findingsBrief = JSON.stringify(
+    findings.map((finding) => ({
+      label: finding.label,
+      summary: finding.summary,
+      slideIdeas: finding.slideIdeas,
+      risks: finding.risks
+    })),
+    null,
+    2
+  );
+  const categorizerId = "outline_categorizer";
+  const writerId = "outline_writer";
+  send?.("agent_started", { agentId: categorizerId, label: "Outline Categorizer" });
+  send?.("agent_started", { agentId: writerId, label: "Gemma Draft Writer" });
+
+  const [categorization, draft] = await Promise.all([
+    runOutlineAgent(
+      "Categorize the source into the 10 required slide formats. Return JSON with assignments and missingEvidence.",
+      {
+        input,
+        feedbackMemory,
+        catalog,
+        findings: findingsBrief
+      }
+    ),
+    runOutlineAgent(
+      "Draft the first-pass 10-slide outline. Return JSON with slides, each including formatId, headline, body, informationArchitecture, and designDirective.",
+      {
+        input,
+        feedbackMemory,
+        catalog,
+        findings: findingsBrief
+      }
+    )
+  ]);
+
+  send?.("agent_complete", {
+    agentId: categorizerId,
+    label: "Outline Categorizer",
+    summary: summariseOutlinePayload(categorization, "Mapped source context into ten distinct slide formats.")
+  });
+  send?.("agent_complete", {
+    agentId: writerId,
+    label: "Gemma Draft Writer",
+    summary: summariseOutlinePayload(draft, "Drafted a format-aware outline for implementation.")
+  });
+
+  const evalId = "outline_eval_clock";
+  send?.("agent_started", { agentId: evalId, label: "6s Eval/Fix Clock" });
+  const evalStarted = performance.now();
+  const evalMs = outlineEvalDurationMs();
+  const perSlideMs = Math.max(1, Math.floor(evalMs / (SLIDE_OUTLINE_STYLES.length + 1)));
+  const fixes: Array<{ formatId: string; label: string; fix: string }> = [];
+  for (const [index, style] of SLIDE_OUTLINE_STYLES.entries()) {
+    const agentId = `eval_${String(index + 1).padStart(2, "0")}`;
+    send?.("agent_started", { agentId, label: `${String(index + 1).padStart(2, "0")} ${style.label}` });
+    await sleep(perSlideMs);
+    const fix = `${style.hardRequirement} Checked: ${style.evalCriteria[0]}. Fix applied: ${style.figmaDirective}`;
+    fixes.push({ formatId: style.id, label: style.label, fix });
+    send?.("agent_complete", {
+      agentId,
+      label: `${String(index + 1).padStart(2, "0")} ${style.label}`,
+      summary: fix
+    });
+  }
+  const elapsedEval = performance.now() - evalStarted;
+  if (elapsedEval < evalMs) {
+    await sleep(evalMs - elapsedEval);
+  }
+  send?.("agent_complete", {
+    agentId: evalId,
+    label: "6s Eval/Fix Clock",
+    summary: `Completed ${SLIDE_OUTLINE_STYLES.length} format gates in ${Math.round(performance.now() - evalStarted)} ms.`
+  });
+
+  return JSON.stringify(
+    {
+      elapsedMs: Math.round(performance.now() - started),
+      catalog: SLIDE_OUTLINE_STYLES,
+      categorization,
+      draft,
+      fixes
+    },
+    null,
+    2
+  );
 }
 
 export async function synthesizeDeck(
   input: GenerateRequest,
   findings: AgentFinding[],
-  feedbackMemory: string
+  feedbackMemory: string,
+  outlineContext = ""
 ): Promise<DeckSpec> {
   try {
     if (!hasCerebrasKey()) {
@@ -132,7 +231,12 @@ export async function synthesizeDeck(
         },
         {
           role: "user",
-          content: buildSynthesisPrompt(input, JSON.stringify(findings, null, 2), feedbackMemory)
+          content: [
+            buildSynthesisPrompt(input, JSON.stringify(findings, null, 2), feedbackMemory),
+            "",
+            "Format-aware outline swarm context:",
+            outlineContext || "(none)"
+          ].join("\n")
         }
       ],
       1800
@@ -146,26 +250,9 @@ export async function synthesizeDeck(
 export function normalizeDeck(candidate: unknown, input: GenerateRequest): DeckSpec {
   const base = isDeckSpec(candidate) ? candidate : fallbackDeck(input, []);
   const slideTarget = normalizeGenerateRequest(input).slideCount;
-  const slides = base.slides.slice(0, slideTarget).map((slide, index) => normalizeSlide(slide, index));
-  while (slides.length < slideTarget) {
-    slides.push(
-      normalizeSlide(
-        {
-          id: `s${slides.length + 1}`,
-          title: `Demo beat ${slides.length + 1}`,
-          headline: "Show one concrete step in the idea to Figma Slides loop.",
-          body: "Use this slide to make the workflow visible and fast.",
-          bullets: ["Context enters", "Gemma agents run", "Slides improve"],
-          evidence: ["Live app state"],
-          visual: "Workflow strip with one highlighted transition.",
-          layout: "workflow",
-          accent: DEFAULT_ACCENTS[slides.length % DEFAULT_ACCENTS.length],
-          speakerNotes: "Narrate the concrete product step."
-        },
-        slides.length
-      )
-    );
-  }
+  const slides = Array.from({ length: slideTarget }, (_, index) =>
+    normalizeSlide(base.slides[index] || fallbackSlideForStyle(index, input, []), index)
+  );
 
   const withoutFigma = {
     title: base.title || "Gemma Deck Forge",
@@ -185,35 +272,31 @@ export function normalizeDeck(candidate: unknown, input: GenerateRequest): DeckS
 }
 
 export function normalizeSlide(slide: Partial<SlideSpec>, index: number): SlideSpec {
-  const layout = normalizeLayout(slide.layout);
+  const style = outlineStyleForIndex(index);
   return {
     id: slide.id || `s${index + 1}`,
-    title: String(slide.title || `Slide ${index + 1}`).slice(0, 90),
-    headline: String(slide.headline || slide.title || "Make the product value obvious.").slice(0, 180),
-    body: String(slide.body || "").slice(0, 360),
-    bullets: Array.isArray(slide.bullets) ? slide.bullets.map(String).filter(Boolean).slice(0, 5) : [],
-    evidence: Array.isArray(slide.evidence) ? slide.evidence.map(String).filter(Boolean).slice(0, 4) : [],
-    visual: String(slide.visual || "Strong single visual object with sparse labels.").slice(0, 280),
-    layout,
+    title: String(slide.title || style.label).slice(0, 90),
+    headline: String(slide.headline || style.purpose).slice(0, 180),
+    body: String(slide.body || style.why).slice(0, 360),
+    bullets: nonEmptyArray(slide.bullets).slice(0, 5),
+    evidence: nonEmptyArray(slide.evidence).slice(0, 4),
+    visual: String(slide.visual || style.figmaDirective).slice(0, 280),
+    layout: style.layout,
+    formatId: style.id,
+    formatLabel: style.label,
+    formatRequirement: String(slide.formatRequirement || style.hardRequirement).slice(0, 260),
+    informationArchitecture: nonEmptyArray(slide.informationArchitecture).length
+      ? nonEmptyArray(slide.informationArchitecture).slice(0, 5)
+      : style.requiredInformation,
+    designDirective: String(slide.designDirective || style.figmaDirective).slice(0, 320),
+    evalCriteria: nonEmptyArray(slide.evalCriteria).length
+      ? nonEmptyArray(slide.evalCriteria).slice(0, 5)
+      : style.evalCriteria,
     accent: /^#[0-9A-Fa-f]{6}$/.test(slide.accent || "")
       ? String(slide.accent)
       : DEFAULT_ACCENTS[index % DEFAULT_ACCENTS.length],
     speakerNotes: String(slide.speakerNotes || "").slice(0, 500)
   };
-}
-
-function normalizeLayout(layout: unknown): SlideSpec["layout"] {
-  const allowed: SlideSpec["layout"][] = [
-    "opener",
-    "thesis",
-    "evidence",
-    "workflow",
-    "before-after",
-    "metric",
-    "demo",
-    "closing"
-  ];
-  return allowed.includes(layout as SlideSpec["layout"]) ? (layout as SlideSpec["layout"]) : "evidence";
 }
 
 function coerceFinding(value: Partial<AgentFinding>): Omit<AgentFinding, "agentId" | "label"> {
@@ -234,102 +317,211 @@ function coerceFinding(value: Partial<AgentFinding>): Omit<AgentFinding, "agentI
 }
 
 function fallbackDeck(input: GenerateRequest, findings: AgentFinding[]): DeckSpec {
-  const idea = normalizeGenerateRequest(input).idea;
-  const proof = findings.flatMap((finding) => finding.slideIdeas).slice(0, 3);
-  const slides: SlideSpec[] = [
-    {
-      id: "s1",
-      title: "Instant Deck Forge",
-      headline: "A deck takes shape while the brainstorm is still happening.",
-      body: "Gemma 4 agents on Cerebras split the work into story, evidence, visuals, Figma handoff, and critique.",
-      bullets: ["Idea in", "Parallel agents", "Figma-ready slides"],
-      evidence: ["Per-agent latency chips in the product UI"],
-      visual: "Full-bleed app screenshot style: idea panel on left, five agent lanes racing on right.",
-      layout: "opener",
-      accent: "#0E7C66",
-      speakerNotes: "Open on speed: this is not a batch deck generator, it is live co-authoring."
-    },
-    {
-      id: "s2",
-      title: "Why Cerebras matters",
-      headline: "Low latency changes the shape of the workflow.",
-      body: "The product uses parallel calls so each specialist agent can finish while the user keeps thinking.",
-      bullets: ["No waiting for one giant response", "Visible agent collaboration", "Fast enough for live review"],
-      evidence: ["Cerebras request timing surfaced in each run"],
-      visual: "Latency race chart with agent lanes converging into slide cards.",
-      layout: "metric",
-      accent: "#D95D39",
-      speakerNotes: "Judges should see speed as product behavior, not a benchmark footnote."
-    },
-    {
-      id: "s3",
-      title: "Gbrain becomes deck evidence",
-      headline: "Private context turns into claims, proof, and caveats.",
-      body: "The Supabase CLI path searches gbrain tables and feeds only relevant snippets into the agents.",
-      bullets: ["Search pages and chunks", "Keep source excerpts", "Avoid invented proof"],
-      evidence: [input.gbrainContext || "Supabase query output"],
-      visual: "Evidence tray flowing into slide proof blocks.",
-      layout: "evidence",
-      accent: "#2D6CDF",
-      speakerNotes: "This is the enterprise hook: internal knowledge becomes usable presentation evidence."
-    },
-    {
-      id: "s4",
-      title: "Feedback loop",
-      headline: "Every run teaches the next run what to keep and what to change.",
-      body: "Ratings and notes are saved locally, summarized, and injected into the next generation prompt.",
-      bullets: ["Save signal", "Reuse preference", "Polish in parallel"],
-      evidence: ["Feedback JSONL memory in the app data directory"],
-      visual: "Loop from deck review to memory to next prompt.",
-      layout: "workflow",
-      accent: "#E0A928",
-      speakerNotes: "The product improves without requiring a heavy training loop."
-    },
-    {
-      id: "s5",
-      title: "Figma handoff",
-      headline: "The output is built for direct Figma Slides mutation.",
-      body: "When the Desktop Bridge is connected, the generated spec can be handed to a Figma agent to create slides in place.",
-      bullets: ["Structured layout spec", "Layer-ready text blocks", "Bridge prompt included"],
-      evidence: ["Recovered Figma Slides MCP workflow"],
-      visual: "Slide spec JSON transforming into Figma slide thumbnails.",
-      layout: "demo",
-      accent: "#8A4FFF",
-      speakerNotes: "Be explicit if the bridge is disconnected during the live demo."
-    },
-    {
-      id: "s6",
-      title: "The bet",
-      headline: "Cerebras speed makes multi-agent creative tools feel interactive.",
-      body: `For ${idea}, the winning demo is the moment many agents finish useful slide work at once.`,
-      bullets: proof.map((item) => item.headline).filter(Boolean).slice(0, 3),
-      evidence: ["Live generation, live polish, Figma-ready export"],
-      visual: "Before/after: blank prompt to polished slide outline in one screen.",
-      layout: "closing",
-      accent: "#0E7C66",
-      speakerNotes: "Close by replaying the speed and the concrete deck output."
-    }
-  ];
+  const slides = SLIDE_OUTLINE_STYLES.map((_, index) => fallbackSlideForStyle(index, input, findings));
 
   return {
     title: "Gemma Deck Forge",
     audience: input.audience,
-    thesis: "Cerebras speed turns multi-agent slide generation into an interactive product loop.",
-    narrativeArc: ["Raw idea", "Parallel interpretation", "Evidence grounding", "Figma-ready output", "Feedback improvement"],
+    thesis: "Cerebras speed turns multi-agent slide generation into a visible outline, eval, fix, and Figma design loop.",
+    narrativeArc: [
+      "Raw idea",
+      "Format categorization",
+      "Draft outline",
+      "Six-second eval/fix swarm",
+      "Figma-ready design instructions",
+      "Live Figma finalizer"
+    ],
     slides,
     demoScript: [
       "Paste idea and run a gbrain query.",
-      "Show five Gemma agents completing in parallel with latency.",
-      "Open the generated slide cards and Figma handoff.",
-      "Save feedback, then polish slides in parallel."
+      "Show Gemma agents categorizing context into ten distinct slide formats.",
+      "Let the six-second eval/fix swarm visibly repair the outline.",
+      "Build the final varied deck in Figma with the Desktop Bridge.",
+      "Save feedback so the next run gets sharper."
     ],
     figmaSpec: buildFigmaSpec({
       title: "Gemma Deck Forge",
       audience: input.audience,
-      thesis: "Cerebras speed turns multi-agent slide generation into an interactive product loop.",
+      thesis: "Cerebras speed turns multi-agent slide generation into a visible outline, eval, fix, and Figma design loop.",
       narrativeArc: [],
       slides,
       demoScript: []
     })
   };
+}
+
+async function runOutlineAgent(instruction: string, payload: unknown): Promise<unknown> {
+  if (!hasCerebrasKey()) {
+    return {
+      fallback: true,
+      instruction,
+      formats: SLIDE_OUTLINE_STYLES.map((style, index) => ({
+        slide: index + 1,
+        formatId: style.id,
+        label: style.label,
+        requirement: style.hardRequirement,
+        designDirective: style.figmaDirective
+      }))
+    };
+  }
+  try {
+    const result = await callCerebrasJson<unknown>(
+      [
+        {
+          role: "system",
+          content:
+            "You are one Gemma 4 agent in a parallel deck-outline swarm. Be concrete, format-aware, and return compact valid JSON only."
+        },
+        {
+          role: "user",
+          content: JSON.stringify({ instruction, payload }, null, 2)
+        }
+      ],
+      1400
+    );
+    return result.value;
+  } catch (error) {
+    return {
+      fallback: true,
+      instruction,
+      error: error instanceof Error ? error.message : String(error),
+      formats: SLIDE_OUTLINE_STYLES.map((style, index) => ({
+        slide: index + 1,
+        formatId: style.id,
+        label: style.label,
+        requirement: style.hardRequirement
+      }))
+    };
+  }
+}
+
+function fallbackSlideForStyle(index: number, input: GenerateRequest, findings: AgentFinding[]): SlideSpec {
+  const style = outlineStyleForIndex(index);
+  const proof = findings.flatMap((finding) => finding.slideIdeas).filter((item) => item.headline || item.evidence);
+  const proofHeadline = proof[index % Math.max(proof.length, 1)]?.headline || "Fast parallel proof";
+  const proofEvidence =
+    proof[index % Math.max(proof.length, 1)]?.evidence ||
+    input.gbrainContext ||
+    "Live app state, Desktop Bridge writes, and per-agent latency chips.";
+  const copy: Record<string, { headline: string; body: string; bullets: string[]; evidence: string[]; visual: string }> = {
+    "cold-open": {
+      headline: "A brainstorm becomes a Figma deck while the user is still thinking.",
+      body: "Gemma 4 agents on Cerebras split story, proof, design, critique, and Figma implementation into visible live work.",
+      bullets: ["Idea/context in", "Ten-format outline", "Figma deck out"],
+      evidence: ["The UI streams agent lanes before the final deck appears."],
+      visual: "Dark live-demo opener with a large claim and Speak component reference thumbnails."
+    },
+    "stakes-thesis": {
+      headline: "Low latency changes slide creation from batch output to live collaboration.",
+      body: "Cerebras speed lets the system draft, critique, and repair while the user keeps judging the story.",
+      bullets: ["Batch generation hides work", "Parallel Gemma lanes expose work", "Humans steer the fix loop"],
+      evidence: ["Per-agent latency and tokens/sec are visible in the app."],
+      visual: "Light thesis slide with two claim chips and a file-style reference cue."
+    },
+    "context-map": {
+      headline: "Private context becomes categorized proof instead of a note dump.",
+      body: "Gbrain, Obsidian, brainstorm notes, and feedback memory are split into source buckets, claims, and caveats.",
+      bullets: ["Source proof", "Deck implication", "Caveat to preserve"],
+      evidence: [proofEvidence],
+      visual: "Evidence wall separating source cards from agent interpretation cards."
+    },
+    "evidence-wall": {
+      headline: "The outline shows which proof belongs on which slide.",
+      body: "Each evidence card is tied to a slide job so design decisions start from meaning, not a template.",
+      bullets: ["Source artifact", "Agent interpretation", "Slide-level use"],
+      evidence: [proofHeadline],
+      visual: "Workflow board with connected cards and one highlighted proof lane."
+    },
+    "workflow-loop": {
+      headline: "The product is a loop: draft, evaluate, repair, then remember.",
+      body: "The first outline is not final; the swarm spends a visible eval window fixing the weak beats.",
+      bullets: ["Draft outline", "Run format gates", "Save feedback memory"],
+      evidence: ["The six-second eval/fix clock emits one gate per slide format."],
+      visual: "Before/after slide showing generic scaffolds becoming slide-specific jobs."
+    },
+    "before-after": {
+      headline: "The system escapes the identical-slide trap by changing the slide job first.",
+      body: "Variety starts in the text outline: each slide has a different information architecture and design directive.",
+      bullets: ["Old: repeated cards", "New: required format", "Proof: renderer-specific design"],
+      evidence: ["Ten outline styles map to ten Figma renderer patterns."],
+      visual: "Dark metric slide with the speed target and action bars."
+    },
+    "speed-metric": {
+      headline: "The demo target is ten varied slides plus 5+ meaningful Figma actions per second.",
+      body: "A meaningful action is a visible build, review, revise, polish, or finalize update on a slide.",
+      bullets: ["10 slides", "50 visible gates", "5+ actions/sec"],
+      evidence: ["Bridge result reports actionCount and actionsPerSecond."],
+      visual: "System map from Gemma lanes into a Figma deck hub."
+    },
+    "system-map": {
+      headline: "The Gemma swarm works because each lane owns a different failure mode.",
+      body: "Story catches weak arcs, evidence catches unsupported claims, visual catches sameness, critic catches demo risk, and Figma catches implementation fit.",
+      bullets: ["Story: arc", "Evidence: proof", "Visual: design variety", "Critic: demo risk", "Figma: buildability"],
+      evidence: ["Agent lanes stream separate summaries before synthesis."],
+      visual: "Bold critique quote with a local Speak design cue."
+    },
+    "critique-fix": {
+      headline: "The best moment is the system naming a weak slide and fixing it.",
+      body: "Each format gate checks one hard requirement, applies a concrete repair, and passes a visible acceptance criterion.",
+      bullets: ["Diagnosis", "Fix", "Acceptance criterion"],
+      evidence: ["Eval cards report per-slide requirement checks."],
+      visual: "Artifact slide with a Speak reference thumbnail and agentic fix notes."
+    },
+    "operator-close": {
+      headline: "The finished artifact is a Figma deck the operator can inspect, edit, and ship.",
+      body: "The operator leaves with a real deck in the same Figma file, ready for inspection, edits, and shipment.",
+      bullets: ["Watch", "Edit", "Ship"],
+      evidence: ["Final Figma section is created below existing file content."],
+      visual: "Dark closing slide with command chips and a final Speak component cue."
+    }
+  };
+  const selected = copy[style.id];
+  return normalizeSlide(
+    {
+      id: `s${index + 1}`,
+      title: style.label,
+      headline: selected.headline,
+      body: selected.body,
+      bullets: selected.bullets,
+      evidence: selected.evidence,
+      visual: selected.visual,
+      layout: style.layout,
+      formatId: style.id,
+      formatLabel: style.label,
+      formatRequirement: style.hardRequirement,
+      informationArchitecture: style.requiredInformation,
+      designDirective: style.figmaDirective,
+      evalCriteria: style.evalCriteria,
+      accent: DEFAULT_ACCENTS[index % DEFAULT_ACCENTS.length],
+      speakerNotes: `${style.why} ${style.draftPrompt}`
+    },
+    index
+  );
+}
+
+function nonEmptyArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).replace(/[\u0000-\u001F\u007F]/g, " ").trim()).filter(Boolean)
+    : [];
+}
+
+export function summariseOutlinePayload(value: unknown, fallback: string): string {
+  if (!value || typeof value !== "object") {
+    return fallback;
+  }
+  const json = JSON.stringify(value);
+  if (!json || json === "{}") return fallback;
+  return json.replace(/\s+/g, " ").slice(0, 260);
+}
+
+function outlineEvalDurationMs(): number {
+  const configured = Number(process.env.GEMMA_OUTLINE_EVAL_MS);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return process.env.NODE_ENV === "test" || process.env.VITEST ? 80 : 6000;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

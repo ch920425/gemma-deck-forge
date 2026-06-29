@@ -18,13 +18,15 @@ test("can generate a deck board through the app flow", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /Gemma Deck Forge|Instant Deck Forge/i })).toBeVisible({
     timeout: 90_000
   });
-  await expect(page.locator(".slideCard")).toHaveCount(6, { timeout: 90_000 });
+  await expect(page.locator(".slideCard")).toHaveCount(10, { timeout: 90_000 });
+  await expect(page.locator(".slideRequirement")).toHaveCount(10);
+  await expect(page.locator(".slideCard .layout", { hasText: "Critique / Fix Pass" })).toHaveCount(1);
 });
 
 test("prepares the parallel Figma finalizer script from the UI", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Generate deck/i }).click();
-  await expect(page.locator(".slideCard")).toHaveCount(6, { timeout: 90_000 });
+  await expect(page.locator(".slideCard")).toHaveCount(10, { timeout: 90_000 });
   await page.getByRole("button", { name: /Build in Figma/i }).click();
   await expect(page.getByRole("heading", { name: "Parallel Figma Finalizer" })).toBeVisible();
   await expect(page.locator(".stageCard")).toHaveCount(50);

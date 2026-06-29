@@ -1,4 +1,5 @@
 import type { AgentId, GenerateRequest } from "./schema";
+import { formatOutlineStylePrompt } from "./outlineStyles";
 
 export interface AgentPrompt {
   id: Exclude<AgentId, "synthesizer" | "polisher">;
@@ -42,10 +43,12 @@ export const agentPrompts: AgentPrompt[] = [
 export function buildAgentUserPrompt(input: GenerateRequest, feedbackMemory: string): string {
   return [
     "Build a Cerebras x Gemma 4 hackathon deck plan from this source.",
+    "The final deck is fixed at 10 slides. Each slide must use a different outline format from this exact catalog:",
+    formatOutlineStylePrompt(),
     "",
     `Idea: ${input.idea}`,
     `Audience: ${input.audience}`,
-    `Target slide count: ${input.slideCount}`,
+    "Target slide count: 10",
     "",
     "Interactive brainstorm notes:",
     input.brainstormNotes || "(none)",
@@ -65,15 +68,19 @@ export function buildSynthesisPrompt(input: GenerateRequest, agentJson: string, 
     "Synthesize the parallel agent findings into a final deck spec.",
     "",
     "Hard constraints:",
+    "- The deck is exactly 10 slides.",
+    "- The 10 slides must use these 10 distinct outline formats in order:",
+    formatOutlineStylePrompt(),
     "- The deck must showcase Cerebras speed and Gemma 4 31B as central to the product.",
     "- The app concept is: idea/context plus gbrain output plus interactive brainstorming to slide outline to Figma Slides.",
     "- Make the deck useful for a 60-second hackathon demo.",
     "- Each slide has one job, one headline claim, concrete visual direction, and speaker notes.",
+    "- Each slide's formatRequirement, informationArchitecture, designDirective, and evalCriteria must dictate its Figma design.",
     "- Use the feedback memory as a product improvement signal.",
     "",
     `Idea: ${input.idea}`,
     `Audience: ${input.audience}`,
-    `Slide count: ${input.slideCount}`,
+    "Slide count: 10",
     `Feedback memory: ${feedbackMemory || "(none yet)"}`,
     "",
     "Agent findings:",
@@ -95,7 +102,13 @@ export function buildSynthesisPrompt(input: GenerateRequest, agentJson: string, 
             bullets: ["string"],
             evidence: ["string"],
             visual: "string",
-            layout: "opener|thesis|evidence|workflow|before-after|metric|demo|closing",
+            layout: "opener|thesis|evidence|workflow|before-after|metric|system-map|quote|artifact|closing",
+            formatId: "cold-open|stakes-thesis|context-map|evidence-wall|workflow-loop|before-after|speed-metric|system-map|critique-fix|operator-close",
+            formatLabel: "string",
+            formatRequirement: "string",
+            informationArchitecture: ["string"],
+            designDirective: "string",
+            evalCriteria: ["string"],
             accent: "#0E7C66",
             speakerNotes: "string"
           }
