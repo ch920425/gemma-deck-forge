@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { gemmaDeckApiPlugin } from "../src/server/apiPlugin";
 import { normalizeDeck } from "../src/server/deck";
 import { getFigmaBridgeServer, resetFigmaBridgeServerForTests, type FigmaBridgeServer } from "../src/server/figmaBridge";
+import { FIGMA_GENERATION_BATCH_COUNT, FIGMA_QA_BATCH_COUNT } from "../src/shared/figma";
 import type { DeckSpec } from "../src/shared/schema";
 
 interface BridgeCommand {
@@ -49,11 +50,17 @@ describe("Figma API route bridge batching", () => {
 
     expect(status).toBe(200);
     expect(body).toMatchObject({ ok: true });
-    expect(commands.length).toBeGreaterThan(1);
+    const result = ((body.result as { result?: Record<string, unknown> }).result || {}) as Record<string, unknown>;
+    expect(commands).toHaveLength(FIGMA_GENERATION_BATCH_COUNT);
     expect(commands.every((command) => command.method === "EXECUTE_CODE")).toBe(true);
     expect(commands.every((command) => Number(command.params?.timeout) <= 2_000)).toBe(true);
+    expect(result.batchIntervalMs).toBe(1000);
+    expect(result.bridgeCommandCount).toBe(FIGMA_GENERATION_BATCH_COUNT);
+    expect(result.sectionId).toBe("section-generated-api");
+    expect(result.slideCount).toBe(10);
+    expect(result.layoutWarnings).toEqual([]);
     expect(new Set(commands.map((command) => String(command.params?.code || ""))).size).toBeGreaterThan(1);
-  }, 20_000);
+  }, 35_000);
 
   it("runs QA through repeated short EXECUTE_CODE batches", async () => {
     const harness = await connectBridgeHarness("QA Route Harness");
@@ -65,11 +72,33 @@ describe("Figma API route bridge batching", () => {
 
     expect(status).toBe(200);
     expect(body).toMatchObject({ ok: true });
-    expect(commands.length).toBeGreaterThan(1);
+    const result = ((body.result as { result?: Record<string, unknown> }).result || {}) as Record<string, unknown>;
+    const qaEvidence = result.qaEvidence as { screenshotCount?: number; exportCount?: number; finalScreenshotReady?: boolean; screenshots?: unknown[] };
+    expect(commands).toHaveLength(FIGMA_QA_BATCH_COUNT);
     expect(commands.every((command) => command.method === "EXECUTE_CODE")).toBe(true);
-    expect(commands.every((command) => Number(command.params?.timeout) <= 2_000)).toBe(true);
+    expect(commands.every((command) => Number(command.params?.timeout) <= 8_000)).toBe(true);
+    expect(commands.every((command) => String(command.params?.code || "").includes('"sectionId":"section-1"'))).toBe(true);
+    expect(commands.every((command) => !String(command.params?.code || "").includes("figma.createSection"))).toBe(true);
+    expect(result.batchIntervalMs).toBe(1000);
+    expect(result.bridgeCommandCount).toBe(FIGMA_QA_BATCH_COUNT);
+    expect(result.maxDiagnoseFixLoops).toBe(10);
+    expect(qaEvidence.screenshotCount).toBe(10);
+    expect(qaEvidence.exportCount).toBe(10);
+    expect(qaEvidence.finalScreenshotReady).toBe(true);
+    expect(qaEvidence.screenshots).toHaveLength(10);
     expect(new Set(commands.map((command) => String(command.params?.code || ""))).size).toBeGreaterThan(1);
-  }, 20_000);
+  }, 35_000);
+
+  it("rejects QA without a generated section id before bridge execution", async () => {
+    const response = await fetch(`${apiBaseUrl}/api/figma/qa`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deck: buildDeck() })
+    });
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({ ok: false, error: "missing_section_id" });
+  });
 });
 
 async function startApiServer(): Promise<string> {
@@ -160,14 +189,59 @@ async function postFigmaRouteWithBatchResponses(
     ]);
     if (!command) break;
     commands.push(command);
+    const totalBatches = path === "/api/figma/build" ? FIGMA_GENERATION_BATCH_COUNT : FIGMA_QA_BATCH_COUNT;
+    const isFinal = index >= totalBatches - 1;
     harness.client.send(
       JSON.stringify({
         id: command.id,
         result: {
           success: true,
           result: {
+            mode: path === "/api/figma/build" ? "generation" : "qa",
             batchIndex: index,
-            batchCount: index + 1
+            totalBatches,
+            batchCount: index + 1,
+            sectionId: path === "/api/figma/build" ? "section-generated-api" : String((payload as { sectionId?: string }).sectionId || "section-1"),
+            sectionName: "Gemma Deck Forge - API Harness",
+            slideCount: 10,
+            frameIds: Array.from({ length: 10 }, (_, slideIndex) => `frame-${slideIndex + 1}`),
+            actionCount: 10,
+            generationCompleteness:
+              path === "/api/figma/build"
+                ? { implementedPercent: isFinal ? 99 : 70, passed: isFinal }
+                : undefined,
+            screenshotEvidence:
+              path === "/api/figma/qa" && (index === 0 || isFinal)
+                ? Array.from({ length: 10 }, (_, slideIndex) => ({
+                    slideId: `s${slideIndex + 1}`,
+                    frameId: `frame-${slideIndex + 1}`,
+                    exportFormat: "PNG",
+                    bytes: 1200 + slideIndex,
+                    dataUrl: "data:image/png;base64,ZmFrZQ==",
+                    qaTagsRemoved: isFinal,
+                    finalScreenshotReady: isFinal
+                  }))
+                : [],
+            qaEvidence:
+              path === "/api/figma/qa" && (index === 0 || isFinal)
+                ? {
+                    sectionId: String((payload as { sectionId?: string }).sectionId || "section-1"),
+                    screenshotCount: 10,
+                    exportCount: 10,
+                    finalScreenshotReady: isFinal,
+                    screenshots: Array.from({ length: 10 }, (_, slideIndex) => ({
+                      slideId: `s${slideIndex + 1}`,
+                      frameId: `frame-${slideIndex + 1}`,
+                      exportFormat: "PNG",
+                      bytes: 1200 + slideIndex,
+                      dataUrl: "data:image/png;base64,ZmFrZQ==",
+                      qaTagsRemoved: isFinal,
+                      finalScreenshotReady: isFinal
+                    }))
+                  }
+                : undefined,
+            feedbackApplied: path === "/api/figma/qa",
+            layoutWarnings: isFinal ? [] : [`${path} in progress`]
           }
         }
       })

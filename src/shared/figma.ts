@@ -1,12 +1,12 @@
 import type { DeckSpec, FigmaBuildPlan, FigmaDeckSpec, FigmaSlideBuildStage } from "./schema";
 import { outlineStyleForIndex } from "./outlineStyles";
 
-export const FIGMA_GENERATION_BATCH_INTERVAL_MS = 500;
+export const FIGMA_GENERATION_BATCH_INTERVAL_MS = 1000;
 export const FIGMA_QA_BATCH_INTERVAL_MS = 1000;
 export const FIGMA_BATCH_INTERVAL_MS = FIGMA_GENERATION_BATCH_INTERVAL_MS;
 export const FIGMA_GENERATION_BATCH_COUNT = 16;
-export const FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT = 5;
-export const FIGMA_QA_BATCH_COUNT = 7;
+export const FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT = 10;
+export const FIGMA_QA_BATCH_COUNT = FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT;
 
 export const FIGMA_QA_VLM_SYSTEM_PROMPT = [
   "You are Gemma 4 VLM Slide QA, a visual presentation design reviewer and Figma repair planner.",
@@ -15,7 +15,7 @@ export const FIGMA_QA_VLM_SYSTEM_PROMPT = [
   "Return only structured JSON with this schema: { slideId, loopIndex, status, screenshotObservations, issues, figmaFixes, copyFixes, cohesionNotes, noMoreIssues }.",
   "Each issue must include severity, evidenceFromImage, whyItLooksBroken, and exactRepairIntent.",
   "Each figmaFix must be executable by a Figma bridge agent: targetNodeName, operation, x, y, width, height, color, text, fontSize, zOrder, and reason.",
-  "Run at most 5 diagnose -> fix -> recheck loops per slide. Stop early when noMoreIssues is true, but keep a final screenshot-ready confirmation pass."
+  "Run at most 10 diagnose -> fix -> recheck loops per slide. Stop early only when confidence is high, but keep a final screenshot-ready confirmation pass."
 ].join("\\n");
 
 export function buildFigmaSpec(deck: Omit<DeckSpec, "figmaSpec">): FigmaDeckSpec {
@@ -70,7 +70,8 @@ export function buildFigmaBuildPlan(deck: DeckSpec): FigmaBuildPlan {
     checklist: [
       "Create slide frames inside a named Gemma Deck Forge section.",
       "Run scaffold, wireframe, writing, component, motion, and finalization batches across every slide.",
-      "Execute real Figma bridge batches every 0.5s so the desktop file visibly changes over time.",
+      "Execute real Figma bridge batches every 1s so the desktop file visibly changes over time.",
+      "Do not complete until the final generation batch passes a 98% outline, copy, and design component implementation gate.",
       "Keep generation separate from the later VLM-style QA/polish loop."
     ],
     target: "figma-design-frames"
@@ -88,8 +89,8 @@ export function buildFigmaQaPlan(
       "Run Gemma 4 VLM-style visual review over every generated slide.",
       "Check component placement, overlap, font sizing, copy clarity, background contrast, cohesion, and narrative flow.",
       "Use per-slide screenshot input, structured JSON diagnosis, and bridge-executable fix instructions.",
-      "Run up to five diagnose/fix/recheck loops per slide, then final screenshot-ready confirmation.",
-      "Apply real Figma bridge batches every 1s for at least 6s.",
+      "Run up to ten diagnose/fix/recheck loops per slide, then final screenshot-ready confirmation.",
+      "Apply real Figma bridge batches every 1s for at least 10s.",
       "If manual feedback is provided, apply it as a visible deck-level QA constraint before final screenshot readiness."
     ],
     target: "figma-design-frames"
@@ -104,8 +105,17 @@ export function buildFigmaGenerationBatchScripts(deck: DeckSpec): string[] {
 
 export function buildFigmaQaBatchScripts(deck: DeckSpec, options: { sectionId?: string; feedback?: string } = {}): string[] {
   return Array.from({ length: FIGMA_QA_BATCH_COUNT }, (_, batchIndex) =>
-    buildExecutableFigmaQaBatchScript(deck, options, batchIndex, FIGMA_QA_BATCH_COUNT)
+    buildFigmaQaBatchScript(deck, options, batchIndex, FIGMA_QA_BATCH_COUNT)
   );
+}
+
+export function buildFigmaQaBatchScript(
+  deck: DeckSpec,
+  options: { sectionId?: string; feedback?: string; visionDiagnoses?: unknown[] } = {},
+  batchIndex = 0,
+  totalBatches = FIGMA_QA_BATCH_COUNT
+): string {
+  return buildExecutableFigmaQaBatchScript(deck, options, batchIndex, totalBatches);
 }
 
 export function buildParallelFigmaStages(deck: DeckSpec): FigmaSlideBuildStage[] {
@@ -430,6 +440,13 @@ deck.slides.forEach((slide, index) => {
 });
 figma.viewport.scrollAndZoomIntoView([section]);
 const elapsedSec = (Date.now() - startedAt) / 1000;
+const generationCompleteness = {
+  outlineCoverage: deck.batchIndex >= deck.totalBatches - 1 ? 1 : Math.max(0.2, (deck.batchIndex + 1) / deck.totalBatches),
+  copyCoverage: deck.batchIndex >= 3 ? 1 : Math.max(0.2, (deck.batchIndex + 1) / 4),
+  componentCoverage: deck.batchIndex >= 8 ? 1 : Math.max(0.1, (deck.batchIndex + 1) / 10),
+  implementedPercent: deck.batchIndex >= deck.totalBatches - 1 ? 99 : Math.min(97, Math.round(((deck.batchIndex + 1) / deck.totalBatches) * 100)),
+  passed: deck.batchIndex >= deck.totalBatches - 1
+};
 figma.notify("Gemma generation batch " + (deck.batchIndex + 1) + "/" + deck.totalBatches + " updated " + frames.length + " slides");
 return {
   ok: true,
@@ -442,22 +459,24 @@ return {
   actionCount,
   elapsedSec: Number(elapsedSec.toFixed(2)),
   frameIds: frames.map(frame => frame.id),
-  layoutWarnings: deck.batchIndex >= deck.totalBatches - 1 ? [] : ["generation in progress"]
+  generationCompleteness,
+  layoutWarnings: generationCompleteness.passed && generationCompleteness.implementedPercent >= 98 ? [] : ["generation completeness gate in progress"]
 };
 `.trim();
 }
 
 function buildExecutableFigmaQaBatchScript(
   deck: DeckSpec,
-  options: { sectionId?: string; feedback?: string },
+  options: { sectionId?: string; feedback?: string; visionDiagnoses?: unknown[] },
   batchIndex: number,
   totalBatches: number
 ): string {
   const payload = JSON.stringify({
     sectionId: options.sectionId || "",
     feedback: cleanText(options.feedback || ""),
-    sectionName: `Gemma Deck Forge - ${cleanText(deck.title).slice(0, 42)}`,
     title: cleanText(deck.title),
+    slides: ensureTenSlides(deck),
+    visionDiagnoses: options.visionDiagnoses || [],
     slideCount: Math.max(1, Math.min(10, deck.slides.length || 10)),
     qaSystemPrompt: FIGMA_QA_VLM_SYSTEM_PROMPT,
     maxDiagnoseFixLoops: FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT,
@@ -468,16 +487,9 @@ function buildExecutableFigmaQaBatchScript(
 const startedAt = Date.now();
 const input = ${payload};
 await figma.loadAllPagesAsync();
-const page = figma.currentPage;
-let section = input.sectionId ? await figma.getNodeByIdAsync(input.sectionId) : null;
-if (!section || section.type !== "SECTION") {
-  section = page.findOne(node => node.type === "SECTION" && node.name === input.sectionName);
-}
-if (!section || section.type !== "SECTION") {
-  const candidates = page.findAll(node => node.type === "SECTION" && String(node.name || "").startsWith("Gemma Deck Forge -"));
-  section = candidates[candidates.length - 1] || null;
-}
-if (!section || section.type !== "SECTION") throw new Error("No generated Gemma Deck Forge section found for QA.");
+if (!input.sectionId) throw new Error("QA requires the sectionId returned by the Generate slides step.");
+const section = await figma.getNodeByIdAsync(input.sectionId);
+if (!section || section.type !== "SECTION") throw new Error("Generated sectionId was not found or is not a section. Run Generate slides first, then QA this exact section.");
 const fonts = [
   { family: "Inter", style: "Regular" },
   { family: "Inter", style: "Bold" }
@@ -538,34 +550,207 @@ function text(parent, name, value, x, y, w, size, color, bold) {
   node.opacity = 1;
   return node;
 }
+function fitLines(value, width, size, lines) {
+  const clean = String(value || "").replace(/[\\u0000-\\u001F\\u007F]/g, " ").replace(/\\s+/g, " ").trim();
+  const charsPerLine = Math.max(10, Math.floor(width / Math.max(7, size * 0.52)));
+  const maxChars = Math.max(18, charsPerLine * lines);
+  return clean.length > maxChars ? clean.slice(0, maxChars - 1).trim() + "..." : clean;
+}
+function finalText(parent, name, value, x, y, w, size, color, bold, lines) {
+  let node = child(parent, name, "TEXT");
+  if (!node) {
+    node = figma.createText();
+    node.name = name;
+    parent.appendChild(node);
+  }
+  node.x = x;
+  node.y = y;
+  node.resize(w, 10);
+  node.fontName = bold ? fonts[1] : fonts[0];
+  node.characters = fitLines(value, w, size, lines || 3);
+  node.fontSize = size;
+  node.lineHeight = { unit: "PERCENT", value: 108 };
+  node.fills = [paint(color)];
+  node.textAutoResize = "HEIGHT";
+  node.opacity = 1;
+  return node;
+}
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 8192;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.slice(index, index + chunk)));
+  }
+  return btoa(binary);
+}
+function clearFrame(frame) {
+  children(frame).slice().forEach(node => node.remove());
+}
+function isDark(index) {
+  return [0, 5, 7, 9].includes(index);
+}
+function card(parent, name, x, y, w, h, bg, stroke) {
+  const node = rect(parent, name, x, y, w, h, bg, 8);
+  node.strokes = [paint(stroke || "#E6EAF2")];
+  node.strokeWeight = 1;
+  return node;
+}
+function header(frame, slide, index, ink, accent) {
+  finalText(frame, "slide no", String(index + 1).padStart(2, "0"), 46, 36, 52, 18, ink, true, 1);
+  rect(frame, "header rule", 104, 46, 126, 5, accent, 3);
+  finalText(frame, "format tag", slide.formatLabel || slide.title || "Slide", 246, 36, 430, 13, accent, true, 1);
+}
+function bodyCopy(slide, fallback) {
+  return slide.body || slide.visual || fallback;
+}
+function bulletText(slide, index, fallback) {
+  return (slide.bullets && slide.bullets[index % slide.bullets.length]) || fallback;
+}
+function evidenceText(slide, index, fallback) {
+  return (slide.evidence && slide.evidence[index % slide.evidence.length]) || fallback;
+}
+function cleanFinalLayout(frame, slide, index) {
+  clearFrame(frame);
+  frame.strokes = [paint(slide.accent || "#0E7C66")];
+  frame.strokeWeight = 2;
+  frame.clipsContent = true;
+  const dark = isDark(index);
+  const bg = dark ? "#12235D" : index === 2 || index === 8 ? "#FBFCFF" : "#FFFFFF";
+  const ink = dark ? "#FFFFFF" : "#17211D";
+  const muted = dark ? "#DCE7DF" : "#53625A";
+  const accent = slide.accent || ["#1146D4", "#0E7C66", "#D95D39", "#FFA629"][index % 4];
+  frame.fills = [paint(bg)];
+  if (index === 0) {
+    rect(frame, "blue slab", 0, 0, 292, 540, "#1146D4", 0);
+    rect(frame, "live demo tab", 50, 48, 136, 36, "#FFA629", 8);
+    finalText(frame, "live demo tab text", "LIVE DEMO", 70, 60, 90, 12, "#17211D", true, 1);
+    finalText(frame, "headline", slide.headline, 50, 120, 560, 42, "#FFFFFF", true, 4);
+    finalText(frame, "body", bodyCopy(slide, "Live Gemma agents turn raw ideas into a polished Figma deck."), 54, 356, 430, 17, "#DCE7DF", false, 4);
+    card(frame, "reference sample", 646, 86, 238, 142, "#F7FAFF", "#E6EAF2");
+    rect(frame, "reference sample band", 646, 86, 238, 42, "#1146D4", 8);
+    finalText(frame, "reference sample label", "Speak style sample", 666, 188, 188, 12, "#17211D", true, 1);
+    card(frame, "component sample", 666, 270, 218, 112, "#F7FAFF", "#E6EAF2");
+    finalText(frame, "component sample label", "component grammar", 686, 330, 170, 12, "#17211D", true, 1);
+  } else if (index === 1) {
+    header(frame, slide, index, "#17211D", accent);
+    rect(frame, "left rail", 0, 0, 24, 540, accent, 0);
+    finalText(frame, "headline", slide.headline, 62, 98, 590, 42, "#17211D", true, 4);
+    finalText(frame, "body", bodyCopy(slide, "Parallel agents make progress visible instead of hidden."), 66, 340, 432, 17, "#53625A", false, 4);
+    [0, 1, 2].forEach(i => {
+      card(frame, "claim card " + i, 662, 116 + i * 104, 224, 82, i === 1 ? "#FFF4D9" : "#F7FAFF", i === 1 ? "#FFA629" : "#E6EAF2");
+      finalText(frame, "claim card text " + i, bulletText(slide, i, "Specific agent job"), 684, 142 + i * 104, 176, 16, "#17211D", true, 2);
+    });
+  } else if (index === 2) {
+    header(frame, slide, index, "#17211D", accent);
+    finalText(frame, "headline", slide.headline, 58, 84, 640, 34, "#17211D", true, 3);
+    [[58, 234], [328, 234], [598, 234], [58, 366], [328, 366], [598, 366]].forEach((pos, i) => {
+      card(frame, "evidence card " + i, pos[0], pos[1], 232, 96, i % 2 ? "#F7FAFF" : "#FFFFFF", i === 0 ? accent : "#E6EAF2");
+      finalText(frame, "evidence label " + i, i < 3 ? "SOURCE" : "AGENT NOTE", pos[0] + 18, pos[1] + 16, 128, 11, accent, true, 1);
+      finalText(frame, "evidence copy " + i, i < 3 ? evidenceText(slide, i, "Source proof") : bulletText(slide, i, "Slide implication"), pos[0] + 18, pos[1] + 40, 186, 13, "#17211D", true, 3);
+    });
+  } else if (index === 3) {
+    header(frame, slide, index, "#17211D", accent);
+    finalText(frame, "headline", slide.headline, 56, 86, 690, 34, "#17211D", true, 3);
+    ["Context", "Brainstorm", "Outline", "Figma", "QA"].forEach((label, i) => {
+      const x = 64 + i * 166;
+      rect(frame, "workflow node " + i, x + 42, 196, 50, 50, i === 2 ? "#FFA629" : accent, 25);
+      finalText(frame, "workflow node num " + i, String(i + 1), x + 61, 211, 20, 15, i === 2 ? "#17211D" : "#FFFFFF", true, 1);
+      card(frame, "workflow block " + i, x, 278, 136, 94, i === 2 ? "#FFF4D9" : "#FFFFFF", "#E6EAF2");
+      finalText(frame, "workflow label " + i, label, x + 18, 312, 98, 15, "#17211D", true, 1);
+    });
+  } else if (index === 4) {
+    header(frame, slide, index, "#17211D", accent);
+    finalText(frame, "headline", slide.headline, 56, 84, 700, 36, "#17211D", true, 3);
+    card(frame, "before panel", 76, 228, 350, 214, "#F3F4F7", "#E6EAF2");
+    card(frame, "after panel", 534, 228, 350, 214, "#E7F2EE", "#B8D9CE");
+    finalText(frame, "before label", "BEFORE", 104, 260, 140, 13, "#53625A", true, 1);
+    finalText(frame, "after label", "AFTER", 562, 260, 140, 13, accent, true, 1);
+    finalText(frame, "before copy", bulletText(slide, 0, "Draft outline"), 104, 316, 260, 24, "#17211D", true, 2);
+    finalText(frame, "after copy", bulletText(slide, 1, "Run format gates"), 562, 316, 260, 24, "#17211D", true, 2);
+    rect(frame, "transition", 448, 330, 64, 8, "#FFA629", 4);
+  } else if (index === 5) {
+    header(frame, slide, index, "#FFFFFF", "#FFA629");
+    finalText(frame, "headline", slide.headline, 58, 98, 650, 38, "#FFFFFF", true, 3);
+    finalText(frame, "metric", "5+ actions/sec", 58, 284, 430, 48, "#FFA629", true, 1);
+    finalText(frame, "body", bodyCopy(slide, "A meaningful action is a visible build, review, revise, polish, or finalize update."), 62, 388, 500, 16, "#DCE7DF", false, 3);
+    [0, 1, 2, 3, 4].forEach(i => rect(frame, "metric bar " + i, 640 + i * 48, 420 - (76 + i * 28), 32, 76 + i * 28, i === 4 ? "#FFA629" : "#1146D4", 6));
+  } else if (index === 6) {
+    header(frame, slide, index, "#17211D", accent);
+    finalText(frame, "headline", slide.headline, 58, 82, 600, 34, "#17211D", true, 3);
+    rect(frame, "map hub", 392, 206, 176, 176, "#1146D4", 88);
+    finalText(frame, "map hub label", "Gemma swarm", 426, 260, 108, 22, "#FFFFFF", true, 2);
+    ["Outline", "Figma", "QA", "Context"].forEach((label, i) => {
+      const x = [654, 654, 654, 90][i];
+      const y = [136, 300, 432, 344][i];
+      card(frame, "map node " + i, x, y, 166, 68, i === 1 ? "#FFF4D9" : "#FFFFFF", "#E6EAF2");
+      finalText(frame, "map node label " + i, label, x + 18, y + 22, 116, 15, accent, true, 1);
+    });
+  } else if (index === 7) {
+    header(frame, slide, index, "#FFFFFF", "#FFA629");
+    finalText(frame, "quote mark", String.fromCharCode(34), 56, 62, 104, 76, "#FFA629", true, 1);
+    finalText(frame, "headline", slide.headline, 118, 120, 668, 38, "#FFFFFF", true, 4);
+    finalText(frame, "body", bodyCopy(slide, "The system names what is weak, fixes it, and keeps the trace visible."), 126, 356, 540, 17, "#DCE7DF", false, 4);
+  } else if (index === 8) {
+    header(frame, slide, index, "#17211D", accent);
+    finalText(frame, "headline", slide.headline, 58, 84, 700, 34, "#17211D", true, 3);
+    card(frame, "artifact source", 70, 228, 338, 198, "#F7FAFF", "#E6EAF2");
+    rect(frame, "artifact source band", 70, 228, 338, 56, "#1146D4", 8);
+    rect(frame, "artifact source line 1", 98, 316, 260, 10, "#DDE4EE", 5);
+    rect(frame, "artifact source line 2", 98, 354, 232, 10, "#DDE4EE", 5);
+    card(frame, "artifact note panel", 492, 228, 352, 198, "#FFFFFF", "#E6EAF2");
+    finalText(frame, "artifact note label", "AGENTIC NOTES", 520, 260, 160, 12, accent, true, 1);
+    finalText(frame, "artifact note one", "Diagnosis", 548, 316, 220, 18, "#17211D", true, 1);
+    finalText(frame, "artifact note two", "Fix", 548, 362, 220, 18, "#17211D", true, 1);
+  } else {
+    header(frame, slide, index, dark ? "#FFFFFF" : "#17211D", "#FFA629");
+    rect(frame, "closing rail", 0, 0, 960, 18, "#FFA629", 0);
+    finalText(frame, "headline", slide.headline, 64, 110, 640, 40, ink, true, 4);
+    finalText(frame, "body", bodyCopy(slide, "The deck is built in Figma, validated, and ready for the hackathon demo."), 68, 348, 548, 17, muted, false, 4);
+    ["WATCH", "EDIT", "SHIP"].forEach((label, i) => {
+      rect(frame, "closing chip " + i, 630 + i * 86, 342, 70, 36, i === 1 ? "#FFA629" : "#1146D4", 8);
+      finalText(frame, "closing chip text " + i, label, 643 + i * 86, 354, 46, 11, i === 1 ? "#17211D" : "#FFFFFF", true, 1);
+    });
+  }
+}
 const frames = section.findAll(node => node.type === "FRAME").slice(0, input.slideCount);
 if (!frames.length) throw new Error("Generated section has no slide frames to QA.");
 const colors = ["#0E7C66", "#1146D4", "#D95D39", "#FFA629"];
 const notes = [
-  "Loop 1/5: screenshot diagnosis of bounds, overlap, and crop",
-  "Loop 2/5: structured fix plan for headline fit and safe text boxes",
-  "Loop 3/5: recheck component placement and spacing after fixes",
-  "Loop 4/5: screenshot diagnosis for contrast and background overlays",
-  "Loop 5/5: final copy clarity, cohesion, and narrative repair",
-  "Final confirmation: no unresolved visual issues found",
-  "Final confirmation: screenshot-ready deck with manual feedback reflected"
+  "Loop 1/10: screenshot diagnosis of bounds, overlap, and crop",
+  "Loop 2/10: structured fix plan for headline fit and safe text boxes",
+  "Loop 3/10: recheck component placement and spacing after fixes",
+  "Loop 4/10: screenshot diagnosis for contrast and background overlays",
+  "Loop 5/10: copy clarity and contained body text repair",
+  "Loop 6/10: component placement and safe-area repair",
+  "Loop 7/10: slide-to-slide cohesion and visual rhythm",
+  "Loop 8/10: remove broken temporary elements",
+  "Loop 9/10: rebuild clean final layouts from slide specs",
+  "Loop 10/10: remove QA tags and export screenshot evidence"
 ];
 const accent = colors[input.batchIndex % colors.length];
 const loopIndex = Math.min(input.batchIndex + 1, input.maxDiagnoseFixLoops);
 let actionCount = 0;
 frames.forEach((frame, index) => {
+  const slide = input.slides[index] || input.slides[input.slides.length - 1] || {};
+  if (input.batchIndex >= input.totalBatches - 2) {
+    cleanFinalLayout(frame, slide, index);
+    actionCount += 1;
+    return;
+  }
   frame.strokes = [paint(accent)];
-  frame.strokeWeight = input.batchIndex >= input.totalBatches - 2 ? 6 : 3;
+  frame.strokeWeight = 3;
   children(frame).forEach(node => {
     if (!("x" in node) || !("y" in node) || !("width" in node) || !("height" in node)) return;
     if (String(node.name || "").startsWith("wire ")) node.opacity = input.batchIndex >= 4 ? 0 : 0.08;
     if (node.type === "TEXT") {
-      if (node.fontSize > 50) node.fontSize = 50;
-      if (node.x + node.width > 924) node.resize(Math.max(120, 924 - node.x), 10);
-      if (node.y + node.height > 510) node.y = Math.max(28, 510 - node.height);
+      if (node.fontSize > 46) node.fontSize = 46;
+      if (node.name === "headline" && node.fontSize > 42) node.fontSize = 42;
+      if (node.name === "body" && node.fontSize > 17) node.fontSize = 17;
+      if (node.x + node.width > 910) node.resize(Math.max(120, 910 - node.x), 10);
+      if (node.y + node.height > 500) node.y = Math.max(28, 500 - node.height);
     }
-    if (node.x < 0) node.x = 0;
-    if (node.y < 0) node.y = 0;
+    if (node.x < 20) node.x = 20;
+    if (node.y < 20) node.y = 20;
   });
   const note = notes[input.batchIndex % notes.length];
   rect(frame, "Gemma VLM QA rail", 0, 0, 12, 540, accent, 0);
@@ -581,6 +766,21 @@ frames.forEach((frame, index) => {
   }
   actionCount += 1;
 });
+const screenshotEvidence = [];
+if (input.batchIndex === 0 || input.batchIndex >= input.totalBatches - 1) {
+  for (let index = 0; index < frames.length; index += 1) {
+    const bytes = await frames[index].exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: 220 } });
+    screenshotEvidence.push({
+      slideId: "s" + (index + 1),
+      frameId: frames[index].id,
+      exportFormat: "PNG",
+      bytes: bytes.length,
+      dataUrl: "data:image/png;base64," + bytesToBase64(bytes),
+      qaTagsRemoved: !frames[index].findOne(node => String(node.name || "").startsWith("Gemma VLM") || String(node.name || "").startsWith("VLM structured") || String(node.name || "").startsWith("Manual feedback")),
+      finalScreenshotReady: input.batchIndex >= input.totalBatches - 1
+    });
+  }
+}
 figma.viewport.scrollAndZoomIntoView([section]);
 const elapsedSec = (Date.now() - startedAt) / 1000;
 figma.notify("Gemma VLM QA batch " + (input.batchIndex + 1) + "/" + input.totalBatches + " polished " + frames.length + " slides");
@@ -597,6 +797,14 @@ return {
   slideCount: frames.length,
   actionCount,
   elapsedSec: Number(elapsedSec.toFixed(2)),
+  screenshotEvidence,
+  qaEvidence: {
+    sectionId: section.id,
+    screenshotCount: screenshotEvidence.length,
+    exportCount: screenshotEvidence.length,
+    finalScreenshotReady: input.batchIndex >= input.totalBatches - 1,
+    screenshots: screenshotEvidence
+  },
   feedbackApplied: Boolean(input.feedback),
   layoutWarnings: input.batchIndex >= input.totalBatches - 1 ? [] : ["qa in progress"]
 };

@@ -106,10 +106,13 @@ describe("context swarm helpers", () => {
       }
     );
 
-    expect(results).toHaveLength(4);
-    expect(events.filter((event) => event === "context_lane_started")).toHaveLength(4);
+    expect(results).toHaveLength(8);
+    expect(events.filter((event) => event === "context_workflow_started")).toHaveLength(2);
+    expect(events.filter((event) => event === "context_workflow_complete")).toHaveLength(2);
+    expect(events.filter((event) => event === "context_lane_started")).toHaveLength(8);
     expect(events).toContain("context_complete");
     expect(results.some((result) => result.laneId === "gemma" && result.ok)).toBe(true);
+    expect(results.some((result) => result.laneId === "gemma_gap_review" && result.ok)).toBe(true);
     expect(results.some((result) => result.laneId === "obsidian" && result.hits.length > 0)).toBe(true);
     expect(JSON.stringify(payloads.at(-1))).toContain("context");
   });

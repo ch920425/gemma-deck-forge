@@ -21,9 +21,11 @@ test("runs context retrieval and five-agent context writing as a staged swarm", 
   await stageBoard(page).getByRole("button", { name: /Retrieve context from KB/i }).click();
 
   await expect(page.getByLabel("context swarm")).toBeVisible({ timeout: 3_000 });
-  await expect(page.locator(".contextLane")).toHaveCount(4, { timeout: 30_000 });
+  await expect(page.getByLabel("Context agentic workflows")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Loop 2: gap review/i)).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".contextLane")).toHaveCount(8, { timeout: 30_000 });
   await expect(page.getByLabel("Context writing swarm")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByLabel("Context writing swarm").locator(".agentLane")).toHaveCount(5);
+  await expect(page.getByLabel("Context writing swarm").locator(".agentLane")).toHaveCount(10);
   await expect(page.getByText("Finalized context text", { exact: true })).toBeVisible();
   await expect(page.getByText(hiddenAudience)).toHaveCount(0);
 });
@@ -33,12 +35,14 @@ test("runs brainstorm, outline, and Figma finalizer without exposing raw JSON", 
   await page.goto("/");
   await stageBoard(page).getByRole("button", { name: /^Next/i }).click();
   await stageBoard(page).getByRole("button", { name: /Retrieve context from KB/i }).click();
-  await expect(page.getByLabel("Context writing swarm").locator(".agentLane")).toHaveCount(5, { timeout: 30_000 });
+  await expect(page.getByLabel("Context writing swarm").locator(".agentLane")).toHaveCount(10, { timeout: 30_000 });
 
   await stageBoard(page).getByRole("button", { name: /^Next/i }).click();
   await stageBoard(page).getByRole("button", { name: /Run brainstorm swarm/i }).click();
+  await expect(page.getByLabel("Brainstorm agentic workflows")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByLabel("Brainstorm agentic workflows").getByText("Brainstorm loop 3/3", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByLabel("Brainstorm agents")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByLabel("Brainstorm agents").locator(".agentLane")).toHaveCount(5);
+  await expect(page.getByLabel("Brainstorm agents").locator(".agentLane")).toHaveCount(15);
   await expect(page.getByText("Final brainstorm brief")).toBeVisible();
 
   await stageBoard(page).getByRole("button", { name: /^Next/i }).click();
@@ -59,7 +63,7 @@ test("runs brainstorm, outline, and Figma finalizer without exposing raw JSON", 
   await figmaHarness.completeExecuteCommands(16, "generation");
   expect(figmaHarness.executeCount()).toBe(16);
   await expect(page.getByText(/Slides generated through/i)).toBeVisible({ timeout: 30_000 });
-  expect(Date.now() - figmaStartedAt).toBeGreaterThanOrEqual(7_000);
+  expect(Date.now() - figmaStartedAt).toBeGreaterThanOrEqual(15_000);
   await expect(page.locator(".stageCard")).toHaveCount(50);
   await expect(page.getByLabel("Figma agent activity")).toBeVisible();
 
@@ -67,18 +71,20 @@ test("runs brainstorm, outline, and Figma finalizer without exposing raw JSON", 
   await stageBoard(page).getByRole("button", { name: /^Run Figma QA Loop/i }).click();
   await expect(page.getByRole("heading", { name: "Gemma VLM QA + Polish Swarm" })).toBeVisible();
   await expect(page.getByText(/screenshot.*structured diagnosis|screenshot.*VLM input/i).first()).toBeVisible();
-  await figmaHarness.completeExecuteCommands(7, "qa");
-  expect(figmaHarness.executeCount()).toBe(23);
+  await figmaHarness.completeExecuteCommands(10, "qa");
+  expect(figmaHarness.executeCount()).toBe(26);
   await expect(page.getByText(/VLM QA\/polish complete/i)).toBeVisible({ timeout: 30_000 });
-  expect(Date.now() - qaStartedAt).toBeGreaterThanOrEqual(6_000);
+  await expect(page.getByText(/Screenshots: 10/i)).toBeVisible();
+  await expect(page.getByText(/final screenshot-ready confirmation: yes/i)).toBeVisible();
+  expect(Date.now() - qaStartedAt).toBeGreaterThanOrEqual(9_000);
 
   await page.getByLabel("Feedback for Figma QA").fill("Make slide 5 more metric-heavy and tighten the final CTA.");
   const feedbackStartedAt = Date.now();
   await stageBoard(page).getByRole("button", { name: /^Apply feedback with QA loop/i }).click();
-  await figmaHarness.completeExecuteCommands(7, "qa-feedback");
-  expect(figmaHarness.executeCount()).toBe(30);
+  await figmaHarness.completeExecuteCommands(10, "qa-feedback");
+  expect(figmaHarness.executeCount()).toBe(36);
   await expect(page.getByText(/Feedback applied: yes/i)).toBeVisible({ timeout: 30_000 });
-  expect(Date.now() - feedbackStartedAt).toBeGreaterThanOrEqual(6_000);
+  expect(Date.now() - feedbackStartedAt).toBeGreaterThanOrEqual(9_000);
 
   await expect(page.getByText(/demo-safe mode|Bridge detail/i)).toHaveCount(0);
   await expect(page.getByText("Figma JSON")).toHaveCount(0);
@@ -145,10 +151,12 @@ async function connectFigmaHarness(page: import("@playwright/test").Page) {
       const receivedCommands: FigmaHarnessCommand[] = [];
       for (let index = 0; index < count; index += 1) {
         const command = await this.nextExecuteCommand();
-        expect(Number(command.params?.timeout)).toBeLessThanOrEqual(2_000);
+        expect(Number(command.params?.timeout)).toBeLessThanOrEqual(mode === "generation" ? 2_000 : 8_000);
         if (mode === "generation" && index === 0) expect(String(command.params?.code || "")).toContain("figma.createSection");
         if (mode !== "generation") expect(String(command.params?.code || "")).toContain("Gemma VLM");
-        if (mode !== "generation") expect(String(command.params?.code || "")).toMatch(/maxDiagnoseFixLoops"?\s*:\s*5/);
+        if (mode !== "generation") expect(String(command.params?.code || "")).toContain('"sectionId":"section-e2e"');
+        if (mode !== "generation") expect(String(command.params?.code || "")).toMatch(/maxDiagnoseFixLoops"?\s*:\s*10/);
+        if (mode !== "generation") expect(String(command.params?.code || "")).not.toContain("figma.createSection");
         receivedCommands.push(command);
         completedIds.add(command.id);
         socket.send(
@@ -165,6 +173,36 @@ async function connectFigmaHarness(page: import("@playwright/test").Page) {
                 batchIndex: index,
                 totalBatches: count,
                 feedbackApplied: mode === "qa-feedback",
+                screenshotEvidence:
+                  mode !== "generation" && (index === 0 || index === count - 1)
+                    ? Array.from({ length: 10 }, (_, slideIndex) => ({
+                        slideId: `s${slideIndex + 1}`,
+                        frameId: `frame-${slideIndex + 1}`,
+                        exportFormat: "PNG",
+                        bytes: 1200 + slideIndex,
+                        dataUrl: "data:image/png;base64,ZmFrZQ==",
+                        qaTagsRemoved: index === count - 1,
+                        finalScreenshotReady: index === count - 1
+                      }))
+                    : [],
+                qaEvidence:
+                  mode !== "generation" && (index === 0 || index === count - 1)
+                    ? {
+                        sectionId: "section-e2e",
+                        screenshotCount: 10,
+                        exportCount: 10,
+                        finalScreenshotReady: index === count - 1,
+                        screenshots: Array.from({ length: 10 }, (_, slideIndex) => ({
+                          slideId: `s${slideIndex + 1}`,
+                          frameId: `frame-${slideIndex + 1}`,
+                          exportFormat: "PNG",
+                          bytes: 1200 + slideIndex,
+                          dataUrl: "data:image/png;base64,ZmFrZQ==",
+                          qaTagsRemoved: index === count - 1,
+                          finalScreenshotReady: index === count - 1
+                        }))
+                      }
+                    : undefined,
                 layoutWarnings: [],
                 frameIds: Array.from({ length: 10 }, (_, slideIndex) => `frame-${slideIndex + 1}`)
               }
@@ -174,7 +212,7 @@ async function connectFigmaHarness(page: import("@playwright/test").Page) {
       }
       expect(receivedCommands).toHaveLength(count);
       expect(receivedCommands.map((command) => command.method)).toEqual(Array(count).fill("EXECUTE_CODE"));
-      expectCommandCadence(receivedCommands, mode === "generation" ? 500 : 1_000);
+      expectCommandCadence(receivedCommands, 1_000);
     },
     executeCount() {
       return messages.filter((message) => message.method === "EXECUTE_CODE").length;

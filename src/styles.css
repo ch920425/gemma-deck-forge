@@ -778,12 +778,44 @@ textarea {
   font-weight: 800;
 }
 
+.workflowLoopPanel,
 .swarmDraftPanel,
 .finalTextWindow {
   border: 1px solid #d8d0bf;
   border-radius: 8px;
   background: #ffffff;
   padding: 12px;
+}
+
+.workflowLoopGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflowLoopCard {
+  min-height: 138px;
+  border: 1px solid #d8d0bf;
+  border-top: 4px solid #2d6cdf;
+  border-radius: 8px;
+  background: #fffdf7;
+  padding: 10px;
+}
+
+.workflowLoopCard.running {
+  background: #f2f7ff;
+}
+
+.workflowLoopCard.done {
+  border-top-color: #0e7c66;
+  background: #f3faf7;
+}
+
+.workflowLoopCard p {
+  margin: 12px 0;
+  color: #334262;
+  font-size: 13px;
+  line-height: 1.38;
 }
 
 .swarmDraftGrid {

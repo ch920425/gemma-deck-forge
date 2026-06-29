@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   FIGMA_GENERATION_BATCH_COUNT,
+  FIGMA_GENERATION_BATCH_INTERVAL_MS,
   FIGMA_QA_BATCH_COUNT,
   FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT,
   FIGMA_QA_VLM_SYSTEM_PROMPT,
@@ -204,7 +205,9 @@ describe("figma handoff", () => {
     expect(plan.target).toBe("figma-design-frames");
     expect(plan.stages).toHaveLength(50);
     expect(plan.stages.slice(0, 5).every((stage) => stage.phase === "build")).toBe(true);
-    expect(plan.checklist.join(" ")).toContain("every 0.5s");
+    expect(FIGMA_GENERATION_BATCH_INTERVAL_MS).toBe(1000);
+    expect(plan.checklist.join(" ")).toContain("every 1s");
+    expect(plan.checklist.join(" ")).toContain("98% outline");
     expect(plan.script).toContain("figma.createSection");
     expect(plan.script).toContain("maxBottom");
     expect(plan.script).toContain("wireframe scaffold");
@@ -247,7 +250,7 @@ describe("figma handoff", () => {
 
     expect(generationScripts).toHaveLength(FIGMA_GENERATION_BATCH_COUNT);
     expect(qaScripts).toHaveLength(FIGMA_QA_BATCH_COUNT);
-    expect(FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT).toBe(5);
+    expect(FIGMA_QA_DIAGNOSE_FIX_LOOP_COUNT).toBe(10);
     expect(FIGMA_QA_VLM_SYSTEM_PROMPT).toContain("screenshotObservations");
     expect(FIGMA_QA_VLM_SYSTEM_PROMPT).toContain("figmaFixes");
     expect(new Set(generationScripts).size).toBe(FIGMA_GENERATION_BATCH_COUNT);
@@ -258,7 +261,13 @@ describe("figma handoff", () => {
     expect(qaScripts[0]).toContain("getNodeByIdAsync");
     expect(qaScripts[0]).toContain("screenshotObservations");
     expect(qaScripts[0]).toContain("maxDiagnoseFixLoops");
+    expect(qaScripts[0]).toContain("exportAsync");
+    expect(qaScripts[0]).toContain("cleanFinalLayout");
+    expect(qaScripts[0]).toContain("bytesToBase64");
     expect(qaScripts.join("\n")).toContain("Feedback applied");
+    expect(qaScripts.join("\n")).toContain('"sectionId":"section-1"');
+    expect(qaScripts.join("\n")).not.toContain("figma.createSection");
+    expect(qaScripts.join("\n")).not.toContain('startsWith("Gemma Deck Forge -")');
     expect(generationScripts.every((script) => !script.includes("sleep("))).toBe(true);
     expect(qaScripts.every((script) => !script.includes("sleep("))).toBe(true);
   });

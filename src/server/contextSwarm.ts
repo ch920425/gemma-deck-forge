@@ -4,7 +4,7 @@ import type { GbrainHit } from "../shared/schema";
 import { callCerebrasJson, hasCerebrasKey } from "./cerebras";
 import { runCommand, runGbrainQuery } from "./gbrain";
 
-export type ContextLaneId = "gbrain" | "obsidian" | "gemma" | "brief";
+export type ContextLaneId = string;
 
 export interface ContextSwarmInput {
   idea: string;
@@ -26,23 +26,57 @@ export interface ContextLaneResult {
 
 export type ContextSwarmSend = (event: string, payload: unknown) => void;
 
-const laneLabels: Record<ContextLaneId, string> = {
+const laneLabels: Record<string, string> = {
   gbrain: "KB retrieval",
   obsidian: "Obsidian CLI",
   gemma: "Gemma organizer",
-  brief: "Local context brief"
+  brief: "Local context brief",
+  gbrain_followup: "KB gap retrieval",
+  obsidian_followup: "Obsidian gap scan",
+  gemma_gap_review: "Gemma gap reviewer",
+  context_tightener: "Context tightener"
 };
 
 export async function runContextSwarm(input: ContextSwarmInput, send: ContextSwarmSend): Promise<ContextLaneResult[]> {
   const normalized = normalizeContextInput(input);
-  const tasks = [
-    runLane("gbrain", send, () => runGbrainLane(normalized)),
-    runLane("obsidian", send, () => runObsidianLane(normalized)),
-    runLane("gemma", send, () => runGemmaLane(normalized)),
-    runLane("brief", send, () => runBriefLane(normalized))
-  ];
-  const results = await Promise.all(tasks);
-    send("context_complete", {
+  const firstLoop = await runContextWorkflow(
+    {
+      workflowId: "context_loop_1",
+      label: "Loop 1: source retrieval and first synthesis",
+      summary: "Parallel KB, Obsidian, Gemma, and local brief agents collect the first context set."
+    },
+    [
+      () => runLane("gbrain", send, () => runGbrainLane(normalized)),
+      () => runLane("obsidian", send, () => runObsidianLane(normalized)),
+      () => runLane("gemma", send, () => runGemmaLane(normalized)),
+      () => runLane("brief", send, () => runBriefLane(normalized))
+    ],
+    send
+  );
+  const followupInput = {
+    ...normalized,
+    query: buildFollowupContextQuery(normalized, firstLoop),
+    existingContext: [normalized.existingContext, buildContextDigest(firstLoop)]
+      .filter(Boolean)
+      .join("\n\n")
+      .slice(0, 9000)
+  };
+  const secondLoop = await runContextWorkflow(
+    {
+      workflowId: "context_loop_2",
+      label: "Loop 2: gap review, deeper retrieval, and tightening",
+      summary: "Gemma reviews loop 1, issues sharper gbrain/Obsidian prompts, adds missing context, then compresses it for brainstorming."
+    },
+    [
+      () => runLane("gbrain_followup", send, () => runGbrainLane(followupInput)),
+      () => runLane("obsidian_followup", send, () => runObsidianLane(followupInput)),
+      () => runLane("gemma_gap_review", send, () => runGemmaLane(followupInput)),
+      () => runLane("context_tightener", send, () => runBriefLane(followupInput))
+    ],
+    send
+  );
+  const results = [...firstLoop, ...secondLoop];
+  send("context_complete", {
     ok: results.some((result) => result.ok),
     laneCount: results.length,
     hitCount: results.flatMap((result) => result.hits).length,
@@ -133,11 +167,11 @@ async function runLane(
   send: ContextSwarmSend,
   task: () => Promise<ContextLaneResult>
 ): Promise<ContextLaneResult> {
-  const label = laneLabels[laneId];
+  const label = laneLabel(laneId);
   send("context_lane_started", { laneId, label, summary: "Starting" });
   const timers = scheduleLaneProgress(laneId, label, send);
   try {
-    const result = await task();
+    const result = { ...(await task()), laneId, label };
     send("context_lane_complete", publicLaneResult(result));
     return result;
   } catch (error) {
@@ -159,11 +193,11 @@ async function runLane(
 
 async function runGbrainLane(input: Required<ContextSwarmInput>): Promise<ContextLaneResult> {
   const started = performance.now();
-  const timeoutMs = Number(process.env.GEMMA_CONTEXT_GBRAIN_TIMEOUT_MS) || 7000;
+  const timeoutMs = Number(process.env.GEMMA_CONTEXT_GBRAIN_TIMEOUT_MS) || 1800;
   const result = await runGbrainQuery(input.query, input.limit, timeoutMs);
   return {
     laneId: "gbrain",
-    label: laneLabels.gbrain,
+    label: laneLabel("gbrain"),
     ok: result.ok,
     summary: result.ok
       ? `Supabase gbrain returned ${result.hits.length} ranked snippets.`
@@ -288,21 +322,59 @@ function getObsidianVaultPath(): string {
 }
 
 function scheduleLaneProgress(laneId: ContextLaneId, label: string, send: ContextSwarmSend): NodeJS.Timeout[] {
-  const messages: Record<ContextLaneId, string[]> = {
+  const messages: Record<string, string[]> = {
     gbrain: ["Supabase CLI query issued", "Ranking page and chunk hits", "Still waiting; other lanes keep working"],
     obsidian: ["Scanning local notes", "Extracting matching note excerpts", "Local search fallback is bounded"],
     gemma: ["Gemma is organizing retrieval angles", "Compressing context into deck-useful claims", "Preparing late-context merge notes"],
-    brief: ["Normalizing user brief", "Preparing immediate fallback context", "Ready to unblock deck agents"]
+    brief: ["Normalizing user brief", "Preparing immediate fallback context", "Ready to unblock deck agents"],
+    gbrain_followup: ["Review found missing proof angles", "Issuing sharper KB query", "Merging new snippets into context"],
+    obsidian_followup: ["Scanning for gaps from loop 1", "Looking for concrete notes and caveats", "Preparing missing detail excerpts"],
+    gemma_gap_review: ["Reviewing first context output", "Diagnosing missing audience and proof details", "Writing follow-up retrieval guidance"],
+    context_tightener: ["Compressing all retrieved context", "Removing repetition before brainstorming", "Final context prompt is almost ready"]
   };
+  const laneMessages = messages[laneId] || ["Agent loop started", "Reviewing context output", "Preparing final handoff"];
   return [700, 1800, 4200].map((delay, index) =>
     setTimeout(() => {
       send("context_lane_progress", {
         laneId,
         label,
-        summary: messages[laneId][index]
+        summary: laneMessages[index]
       });
     }, delay)
   );
+}
+
+async function runContextWorkflow(
+  workflow: { workflowId: string; label: string; summary: string },
+  tasks: Array<() => Promise<ContextLaneResult>>,
+  send: ContextSwarmSend
+): Promise<ContextLaneResult[]> {
+  send("context_workflow_started", { ...workflow, status: "running" });
+  const started = performance.now();
+  const results = await Promise.all(tasks.map((task) => task()));
+  send("context_workflow_complete", {
+    ...workflow,
+    status: "done",
+    elapsedMs: elapsed(started),
+    hitCount: results.flatMap((result) => result.hits).length,
+    summary: `${workflow.label} finished with ${results.filter((result) => result.ok).length}/${results.length} lanes contributing.`
+  });
+  return results;
+}
+
+function buildFollowupContextQuery(input: Required<ContextSwarmInput>, firstLoop: ContextLaneResult[]): string {
+  const firstDigest = buildContextDigest(firstLoop).toLowerCase();
+  const missingAngles = [
+    firstDigest.includes("figma") ? "" : "Figma bridge visual proof",
+    firstDigest.includes("cerebras") || firstDigest.includes("gemma") ? "" : "Cerebras Gemma 4 speed proof",
+    firstDigest.includes("risk") || firstDigest.includes("caveat") ? "" : "risks caveats limitations",
+    firstDigest.includes("judge") || firstDigest.includes("audience") ? "" : "hackathon judge evaluation criteria"
+  ].filter(Boolean);
+  return [input.query, input.idea, "missing context gaps", ...missingAngles].join(" ").slice(0, 900);
+}
+
+function laneLabel(laneId: string): string {
+  return laneLabels[laneId] || laneId.replace(/_/g, " ");
 }
 
 function fallbackGemmaContext(input: Required<ContextSwarmInput>): string {

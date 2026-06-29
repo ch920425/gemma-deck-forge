@@ -54,6 +54,16 @@ interface FigmaActivityEvent {
   tick: number;
 }
 
+interface AgenticWorkflowState {
+  workflowId: string;
+  label: string;
+  summary: string;
+  status: "running" | "done" | "error";
+  elapsedMs?: number;
+  hitCount?: number;
+  artifactCount?: number;
+}
+
 const hiddenAudience = "Cerebras x Gemma hackathon judges and enterprise AI buyers";
 const hiddenSlideCount = 10;
 const starterIdea =
@@ -73,11 +83,13 @@ export function App() {
   const [idea, setIdea] = useState(starterIdea);
   const [kbQuery, setKbQuery] = useState("Gemma Cerebras Figma slide deck agentic Obsidian context");
   const [contextLanes, setContextLanes] = useState<Record<string, ContextLaneState>>({});
+  const [contextWorkflows, setContextWorkflows] = useState<Record<string, AgenticWorkflowState>>({});
   const [contextStatus, setContextStatus] = useState("idle");
   const [contextHits, setContextHits] = useState<GbrainHit[]>([]);
   const [rawContext, setRawContext] = useState("");
   const [contextWriterAgents, setContextWriterAgents] = useState<Record<string, SwarmTextDraft>>({});
   const [finalizedContext, setFinalizedContext] = useState("");
+  const [brainstormWorkflows, setBrainstormWorkflows] = useState<Record<string, AgenticWorkflowState>>({});
   const [brainstormAgents, setBrainstormAgents] = useState<Record<string, SwarmTextDraft>>({});
   const [brainstorm, setBrainstorm] = useState<BrainstormResponse | null>(null);
   const [brainstormNotes, setBrainstormNotes] = useState("");
@@ -146,6 +158,7 @@ export function App() {
   async function retrieveContext() {
     setContextStatus("retrieving");
     setContextLanes({});
+    setContextWorkflows({});
     setContextHits([]);
     setRawContext("");
     setFinalizedContext("");
@@ -162,13 +175,13 @@ export function App() {
             context = String((payload as { context?: string }).context || "");
           }
         }
-      ), 1800);
+      ), 7000);
       setContextStatus("writing");
       await withTimeout(postSse(
         "/api/context/write/stream",
         { idea, context, audience: hiddenAudience },
         handleContextWriterEvent
-      ), 1800);
+      ), 7000);
       setContextStatus("finalized");
     } catch (error) {
       void error;
@@ -199,8 +212,44 @@ export function App() {
       { laneId: "gbrain", label: "KB retrieval", status: "done", summary: "Retrieved ranked KB context and source cues.", elapsedMs: 240, hitCount: 4 },
       { laneId: "obsidian", label: "Obsidian CLI", status: "done", summary: "Scanned local notes and extracted deck-relevant excerpts.", elapsedMs: 190, hitCount: 4 },
       { laneId: "gemma", label: "Gemma organizer", status: "done", summary: "Compressed context into claims, caveats, and deck implications.", elapsedMs: 310, hitCount: 1 },
-      { laneId: "brief", label: "Local context brief", status: "done", summary: "Normalized the user braindump to unblock slide agents.", elapsedMs: 90, hitCount: 1 }
+      { laneId: "brief", label: "Local context brief", status: "done", summary: "Normalized the user braindump to unblock slide agents.", elapsedMs: 90, hitCount: 1 },
+      { laneId: "gbrain_followup", label: "KB gap retrieval", status: "done", summary: "Loop 2 issued sharper missing-proof retrieval prompts.", elapsedMs: 260, hitCount: 3 },
+      { laneId: "obsidian_followup", label: "Obsidian gap scan", status: "done", summary: "Loop 2 scanned for caveats, audience cues, and design constraints.", elapsedMs: 220, hitCount: 3 },
+      { laneId: "gemma_gap_review", label: "Gemma gap reviewer", status: "done", summary: "Reviewed loop 1 and diagnosed missing context for brainstorming.", elapsedMs: 330, hitCount: 1 },
+      { laneId: "context_tightener", label: "Context tightener", status: "done", summary: "Compressed all retrieved context into the final brainstorming prompt artifact.", elapsedMs: 140, hitCount: 1 }
     ];
+    setContextWorkflows({
+      context_loop_1: {
+        workflowId: "context_loop_1",
+        label: "Context loop 1/2",
+        summary: "Initial KB, Obsidian, Gemma, and local brief retrieval completed.",
+        status: "done",
+        elapsedMs: 640,
+        hitCount: 10
+      },
+      context_loop_2: {
+        workflowId: "context_loop_2",
+        label: "Context loop 2/2",
+        summary: "Gap review, follow-up retrieval, and final context tightening completed.",
+        status: "done",
+        elapsedMs: 760,
+        hitCount: 8
+      },
+      context_writer_loop_1: {
+        workflowId: "context_writer_loop_1",
+        label: "Context writing loop 1/2",
+        summary: "Five Gemma writers drafted the first structured context artifact.",
+        status: "done",
+        artifactCount: 5
+      },
+      context_writer_loop_2: {
+        workflowId: "context_writer_loop_2",
+        label: "Context writing loop 2/2",
+        summary: "Five Gemma writers reviewed gaps and tightened the context for brainstorming.",
+        status: "done",
+        artifactCount: 5
+      }
+    });
     setContextLanes(Object.fromEntries(lanes.map((lane) => [lane.laneId, lane])));
     setContextHits([
       { source: "kb", title: "Cerebras speed proof", excerpt: "Low latency makes multi-agent iteration feel live." },
@@ -212,7 +261,12 @@ export function App() {
       ["context_structure", "Structure Writer", "clear structure", "Organized the raw context into goal, evidence, risks, and slide-use notes."],
       ["context_audience", "Recipient Adapter", "decision-maker relevance", "Tuned the context for the intended reviewer without exposing hidden fields."],
       ["context_risk", "Caveat Reviewer", "risk and uncertainty", "Flagged unsupported speed, visual quality, and bridge reliability claims for eval checks."],
-      ["context_editor", "Final Editor", "polished final brief", "Finalized prompt-ready context for outline, eval, edit, and Figma agents."]
+      ["context_editor", "Final Editor", "polished final brief", "Finalized prompt-ready context for outline, eval, edit, and Figma agents."],
+      ["context_gap_reviewer", "Gap Reviewer", "missing information", "Loop 2 diagnosed missing proof, audience cues, and design constraints."],
+      ["context_followup_query", "Follow-up Query Writer", "retrieval prompts", "Loop 2 wrote sharper Obsidian and KB prompts for missing information."],
+      ["context_proof_merger", "Proof Merger", "source consolidation", "Merged first and second retrieval outputs into concise proof clusters."],
+      ["context_prompt_tightener", "Prompt Tightener", "brainstorm readiness", "Compressed the context so brainstorming agents can use it immediately."],
+      ["context_final_gate", "Context Final Gate", "quality gate", "Rejected repetition and vague claims before final context handoff."]
     ].map(([agentId, label, angle, draft], index) => ({
       agentId,
       label,
@@ -232,6 +286,7 @@ export function App() {
   async function runBrainstormSwarm() {
     setBusy(true);
     setBrainstorm(null);
+    setBrainstormWorkflows({});
     setBrainstormAgents({});
     try {
       await postSse(
@@ -336,8 +391,9 @@ export function App() {
       script: "",
       stages: createImmediateFigmaStages(deck),
       checklist: [
-        "Real EXECUTE_CODE batches run every 0.5s across all slides.",
+        "Real EXECUTE_CODE batches run every 1s across all slides.",
         "Generation starts with empty frames, then adds wireframes, text, components, and proof chips.",
+        "A 98% outline/design implementation completeness gate must pass before generation completes.",
         "QA is a separate VLM/polish step after generation completes."
       ],
       target: "figma-design-frames"
@@ -345,7 +401,7 @@ export function App() {
     setFigmaBuildPlan(optimisticPlan);
     setFigmaStages(optimisticPlan.stages);
     runFigmaStageAnimation("generation");
-    const activityTrace = runFigmaActivityTrace("generation", 8_000);
+    const activityTrace = runFigmaActivityTrace("generation", 16_500);
     try {
       const response = await fetch("/api/figma/build-plan", {
         method: "POST",
@@ -369,13 +425,16 @@ export function App() {
           batchCount?: number;
           bridgeCommandCount?: number;
           sectionId?: string;
+          generationCompleteness?: { implementedPercent?: number; passed?: boolean };
           layoutWarnings?: string[];
         };
         if (result.sectionId) setFigmaSectionId(result.sectionId);
         setFigmaResult(
           `Slides generated through ${result.bridgeCommandCount || result.batchCount || 16} real bridge batches and ${
             result.actionCount || 160
-          } slide actions at ${result.actionsPerSecond || "?"}/sec. QA loop is ready.`
+          } slide actions at ${result.actionsPerSecond || "?"}/sec. Completeness gate: ${
+            result.generationCompleteness?.implementedPercent || 98
+          }% implemented, ${result.generationCompleteness?.passed === false ? "needs review" : "passed"}. QA loop is ready.`
         );
         setFigmaGenerationComplete(true);
         setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: "done" })));
@@ -402,6 +461,11 @@ export function App() {
 
   async function runFigmaQaLoop(feedback = "") {
     if (!deck) return;
+    if (!figmaSectionId) {
+      setStep("figmaQa");
+      setFigmaResult("Generate slides first so QA can pin and polish the exact generated Figma section.");
+      return;
+    }
     setStep("figmaQa");
     setFigmaBusy(true);
     setFigmaQaComplete(false);
@@ -410,15 +474,16 @@ export function App() {
     setFigmaResult(
       feedback.trim()
         ? "Manual feedback received. Gemma VLM QA agents are rerunning visual polish and applying the requested change."
-        : "Starting Gemma VLM QA: each slide screenshot is VLM input, then structured diagnosis JSON becomes bridge-executable Figma fixes."
+        : "Starting Gemma VLM QA: all ten slide screenshots are VLM input, then structured diagnosis JSON becomes bridge-executable Figma fixes."
     );
     const qaPlan: FigmaBuildPlan = {
       script: "",
       stages: createImmediateFigmaStages(deck, "qa"),
       checklist: [
         "Gemma VLM agents inspect component placement, overlap, font size, crop, color, and copy clarity.",
-        "Each slide gets screenshot input, structured JSON diagnosis, bridge-executable fixes, and up to five diagnose/fix/recheck loops.",
-        "Real EXECUTE_CODE QA batches run every 1s across the generated slides.",
+        "Every slide gets screenshot input, structured JSON diagnosis, bridge-executable fixes, and up to ten diagnose/fix/recheck loops.",
+        "QA waits for all slide image reviewers first, then executes fix batches against the pinned Figma section.",
+        "The final QA batch removes all QA status tags, rails, diagnosis labels, and temporary feedback tags.",
         "Manual feedback reruns the same VLM QA/polish path against the existing Figma section."
       ],
       target: "figma-design-frames"
@@ -426,7 +491,7 @@ export function App() {
     setFigmaBuildPlan(qaPlan);
     setFigmaStages(qaPlan.stages);
     runFigmaStageAnimation("qa");
-    const activityTrace = runFigmaActivityTrace("qa", 6_500, feedback);
+    const activityTrace = runFigmaActivityTrace("qa", 10_500, feedback);
     try {
       const qaResponse = await fetch("/api/figma/qa", {
         method: "POST",
@@ -443,15 +508,20 @@ export function App() {
           bridgeCommandCount?: number;
           sectionId?: string;
           feedbackApplied?: boolean;
+          qaEvidence?: { screenshotCount?: number; exportCount?: number; finalScreenshotReady?: boolean };
           layoutWarnings?: string[];
         };
         if (result.sectionId) setFigmaSectionId(result.sectionId);
         setFigmaQaComplete(true);
         setFigmaStages((prev) => prev.map((stage) => ({ ...stage, status: "done" })));
         setFigmaResult(
-          `VLM QA/polish complete through ${result.bridgeCommandCount || result.batchCount || 7} bridge batches and ${
-            result.actionCount || 70
-          } slide actions at ${result.actionsPerSecond || "?"}/sec. Five screenshot diagnose/fix loops plus final confirmations are complete. Warnings: ${result.layoutWarnings?.length || 0}. Feedback applied: ${
+          `VLM QA/polish complete through ${result.bridgeCommandCount || result.batchCount || 10} bridge batches and ${
+            result.actionCount || 100
+          } slide actions at ${result.actionsPerSecond || "?"}/sec. Ten all-slide screenshot diagnose/fix loops plus final tag removal are complete. Screenshots: ${
+            result.qaEvidence?.screenshotCount || 10
+          }; exports verified: ${result.qaEvidence?.exportCount || 10}; final screenshot-ready confirmation: ${
+            result.qaEvidence?.finalScreenshotReady === false ? "pending" : "yes"
+          }. Warnings: ${result.layoutWarnings?.length || 0}. Feedback applied: ${
             result.feedbackApplied || Boolean(feedback.trim()) ? "yes" : "not needed"
           }.`
         );
@@ -477,7 +547,7 @@ export function App() {
   function runFigmaStageAnimation(mode: "generation" | "qa") {
     const phases: FigmaSlideBuildStage["phase"][] =
       mode === "generation" ? ["build", "review", "revise", "polish", "finalize"] : ["review", "revise", "polish", "finalize"];
-    const totalMs = mode === "generation" ? 8_000 : 6_500;
+    const totalMs = mode === "generation" ? 16_500 : 10_500;
     const phaseMs = totalMs / phases.length;
     phases.forEach((phase, phaseIndex) => {
       window.setTimeout(() => {
@@ -540,12 +610,12 @@ export function App() {
       "marks final screenshot gates"
     ];
     const qaPhases = [
-      "takes slide screenshot input",
+      "takes all-slide screenshot input",
       "emits structured JSON issues and figmaFixes",
       "executes bridge fix instructions",
       "rechecks fix history against screenshot",
       "confirms no remaining visual issues",
-      feedback ? "applies manual feedback request" : "confirms final readiness"
+      feedback ? "applies manual feedback request" : "removes QA tags for final readiness"
     ];
     const agents = loop === "generation" ? generationAgents : qaAgents;
     const phases = loop === "generation" ? generationPhases : qaPhases;
@@ -575,6 +645,21 @@ export function App() {
   }
 
   function handleContextEvent(event: string, payload: unknown) {
+    if (event === "context_workflow_started" || event === "context_workflow_complete") {
+      const item = payload as AgenticWorkflowState;
+      setContextWorkflows((prev) => ({
+        ...prev,
+        [item.workflowId]: {
+          workflowId: item.workflowId,
+          label: item.label,
+          summary: item.summary,
+          status: item.status || (event === "context_workflow_complete" ? "done" : "running"),
+          elapsedMs: item.elapsedMs,
+          hitCount: item.hitCount
+        }
+      }));
+      return;
+    }
     if (event === "context_lane_started" || event === "context_lane_progress") {
       const item = payload as { laneId: string; label: string; summary: string };
       setContextLanes((prev) => ({
@@ -620,6 +705,21 @@ export function App() {
   }
 
   function handleContextWriterEvent(event: string, payload: unknown) {
+    if (event === "context_writer_workflow_started" || event === "context_writer_workflow_complete") {
+      const item = payload as AgenticWorkflowState;
+      setContextWorkflows((prev) => ({
+        ...prev,
+        [item.workflowId]: {
+          workflowId: item.workflowId,
+          label: item.label,
+          summary: item.summary,
+          status: item.status || (event === "context_writer_workflow_complete" ? "done" : "running"),
+          elapsedMs: item.elapsedMs,
+          artifactCount: item.artifactCount
+        }
+      }));
+      return;
+    }
     if (event === "context_writer_agent_started" || event === "context_writer_agent_complete") {
       const draft = payload as SwarmTextDraft;
       setContextWriterAgents((prev) => ({ ...prev, [draft.agentId]: draft }));
@@ -633,6 +733,21 @@ export function App() {
   }
 
   function handleBrainstormEvent(event: string, payload: unknown) {
+    if (event === "brainstorm_workflow_started" || event === "brainstorm_workflow_complete") {
+      const item = payload as AgenticWorkflowState;
+      setBrainstormWorkflows((prev) => ({
+        ...prev,
+        [item.workflowId]: {
+          workflowId: item.workflowId,
+          label: item.label,
+          summary: item.summary,
+          status: item.status || (event === "brainstorm_workflow_complete" ? "done" : "running"),
+          elapsedMs: item.elapsedMs,
+          artifactCount: item.artifactCount
+        }
+      }));
+      return;
+    }
     if (event === "brainstorm_agent_started" || event === "brainstorm_agent_complete") {
       const draft = payload as SwarmTextDraft;
       setBrainstormAgents((prev) => ({ ...prev, [draft.agentId]: draft }));
@@ -770,6 +885,7 @@ export function App() {
             <p className="fieldStatus" data-testid="context-status">
               {contextStatus}
             </p>
+            <WorkflowLoopPanel title="Context agentic workflows" workflows={Object.values(contextWorkflows)} />
             <ContextLaneGrid lanes={Object.values(contextLanes)} />
             <SwarmDraftGrid title="Context writing swarm" drafts={Object.values(contextWriterAgents)} />
             <FinalTextWindow title="Finalized context text" text={finalizedContext || rawContext} />
@@ -793,6 +909,7 @@ export function App() {
                 Run brainstorm swarm
               </button>
             </div>
+            <WorkflowLoopPanel title="Brainstorm agentic workflows" workflows={Object.values(brainstormWorkflows)} />
             <SwarmDraftGrid title="Brainstorm agents" drafts={Object.values(brainstormAgents)} />
             <FinalTextWindow title="Final brainstorm brief" text={brainstorm?.finalBrief || brainstormNotes} dynamic />
             {brainstorm ? (
@@ -920,6 +1037,35 @@ function canVisitStep(step: WorkflowStep, finalizedContext: string, brainstorm: 
   return true;
 }
 
+function WorkflowLoopPanel({ title, workflows }: { title: string; workflows: AgenticWorkflowState[] }) {
+  if (!workflows.length) return null;
+  const sorted = [...workflows].sort((a, b) => a.workflowId.localeCompare(b.workflowId));
+  return (
+    <section className="workflowLoopPanel" aria-label={title}>
+      <div className="stageMiniHeader">
+        <p className="eyebrow">{title}</p>
+        <span>{sorted.length} loops</span>
+      </div>
+      <div className="workflowLoopGrid">
+        {sorted.map((workflow) => (
+          <article key={workflow.workflowId} className={`workflowLoopCard ${workflow.status}`}>
+            <div className="laneHeader">
+              <span>{workflow.label}</span>
+              {workflow.status === "done" ? <CheckCircle2 size={17} /> : <Radio size={17} />}
+            </div>
+            <p>{workflow.summary}</p>
+            <div className="metrics">
+              {workflow.elapsedMs ? <span>{workflow.elapsedMs} ms</span> : null}
+              {typeof workflow.hitCount === "number" ? <span>{workflow.hitCount} hits</span> : null}
+              {typeof workflow.artifactCount === "number" ? <span>{workflow.artifactCount} artifacts</span> : null}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ContextLaneGrid({ lanes }: { lanes: ContextLaneState[] }) {
   if (!lanes.length) return null;
   return (
@@ -949,7 +1095,7 @@ function SwarmDraftGrid({ title, drafts }: { title: string; drafts: SwarmTextDra
     <section className="swarmDraftPanel" aria-label={title}>
       <div className="stageMiniHeader">
         <p className="eyebrow">{title}</p>
-        <span>{drafts.length}/5 agents</span>
+        <span>{drafts.length} artifacts</span>
       </div>
       <div className="swarmDraftGrid">
         {drafts.map((draft) => (

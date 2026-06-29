@@ -86,7 +86,7 @@ describe("Cerebras helpers without configured keys", () => {
 });
 
 describe("fallback generation flow", () => {
-  it("runs the context writer swarm with five real agent lanes and hidden recipient constraints", async () => {
+  it("runs the context writer swarm with two agentic loops and hidden recipient constraints", async () => {
     const events: string[] = [];
     const audience = "Cerebras x Gemma hackathon judges and enterprise AI buyers";
     const result = await runContextWritingSwarm(
@@ -97,16 +97,18 @@ describe("fallback generation flow", () => {
       },
       (event) => events.push(event)
     );
-    expect(result.drafts).toHaveLength(5);
-    expect(events.filter((event) => event === "context_writer_agent_started")).toHaveLength(5);
-    expect(events.filter((event) => event === "context_writer_agent_complete")).toHaveLength(5);
+    expect(result.drafts).toHaveLength(10);
+    expect(events.filter((event) => event === "context_writer_workflow_started")).toHaveLength(2);
+    expect(events.filter((event) => event === "context_writer_workflow_complete")).toHaveLength(2);
+    expect(events.filter((event) => event === "context_writer_agent_started")).toHaveLength(10);
+    expect(events.filter((event) => event === "context_writer_agent_complete")).toHaveLength(10);
     expect(events).toContain("context_writer_complete");
     expect(result.finalText).toContain("Finalized Context Brief");
     expect(result.finalText).toContain("Cerebras low latency");
     expect(result.finalText).not.toContain(`Audience: ${audience}`);
   });
 
-  it("runs the brainstorm swarm with five angles and keeps recipient values out of visible brief text", async () => {
+  it("runs the brainstorm swarm with three agentic loops and keeps recipient values out of visible brief text", async () => {
     const events: string[] = [];
     const audience = "Cerebras x Gemma hackathon judges and enterprise AI buyers";
     const result = await runBrainstormSwarm(
@@ -117,11 +119,13 @@ describe("fallback generation flow", () => {
       },
       (event) => events.push(event)
     );
-    expect(result.agentDrafts).toHaveLength(5);
+    expect(result.agentDrafts).toHaveLength(15);
     expect(result.keyMessages).toHaveLength(3);
     expect(result.audience).toBe(audience);
-    expect(events.filter((event) => event === "brainstorm_agent_started")).toHaveLength(5);
-    expect(events.filter((event) => event === "brainstorm_agent_complete")).toHaveLength(5);
+    expect(events.filter((event) => event === "brainstorm_workflow_started")).toHaveLength(3);
+    expect(events.filter((event) => event === "brainstorm_workflow_complete")).toHaveLength(3);
+    expect(events.filter((event) => event === "brainstorm_agent_started")).toHaveLength(15);
+    expect(events.filter((event) => event === "brainstorm_agent_complete")).toHaveLength(15);
     expect(events).toContain("brainstorm_complete");
     expect(result.finalBrief).toContain("Brainstorm Final Brief");
     expect(result.finalBrief).not.toContain(`Audience: ${audience}`);
