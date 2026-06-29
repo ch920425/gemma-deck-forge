@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import { buildFigmaHandoffPrompt } from "../shared/figma";
+import { buildFigmaBuildPlan, buildFigmaHandoffPrompt } from "../shared/figma";
 import { buildBrainstormPrompt } from "../shared/prompts";
 import type { BrainstormResponse, DeckSpec, GenerateRequest, PolishRequest } from "../shared/schema";
 import { callCerebrasJson, fallbackBrainstorm, hasCerebrasKey } from "./cerebras";
@@ -120,6 +120,16 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
       figmaSpec: body.deck.figmaSpec,
       handoffPrompt: buildFigmaHandoffPrompt(body.deck)
     });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/figma/build-plan") {
+    const body = (await readJson(req)) as { deck?: DeckSpec };
+    if (!body.deck) {
+      sendJson(res, 400, { error: "missing_deck" });
+      return;
+    }
+    sendJson(res, 200, buildFigmaBuildPlan(body.deck));
     return;
   }
 

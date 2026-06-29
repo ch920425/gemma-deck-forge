@@ -8,3 +8,4 @@ playwright-report/
 data/*.jsonl
 data/*.tmp
 supabase/.temp/
+.omx/

@@ -84,6 +84,23 @@ export interface FigmaDeckSpec {
   }>;
 }
 
+export type FigmaBuildPhase = "build" | "review" | "revise" | "polish" | "finalize";
+
+export interface FigmaSlideBuildStage {
+  slideId: string;
+  title: string;
+  phase: FigmaBuildPhase;
+  status: "queued" | "running" | "done";
+  summary: string;
+}
+
+export interface FigmaBuildPlan {
+  script: string;
+  stages: FigmaSlideBuildStage[];
+  checklist: string[];
+  target: "figma-design-frames" | "figma-slides";
+}
+
 export interface FeedbackEntry {
   id: string;
   createdAt: string;

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AgentFinding, BrainstormResponse, DeckSpec, GbrainHit } from "./shared/schema";
+import type { FigmaBuildPlan, FigmaSlideBuildStage } from "./shared/schema";
 
 interface AgentState {
   label: string;
@@ -39,6 +40,8 @@ export function App() {
   const [deck, setDeck] = useState<DeckSpec | null>(null);
   const [busy, setBusy] = useState(false);
   const [figmaPrompt, setFigmaPrompt] = useState("");
+  const [figmaBuildPlan, setFigmaBuildPlan] = useState<FigmaBuildPlan | null>(null);
+  const [figmaStages, setFigmaStages] = useState<FigmaSlideBuildStage[]>([]);
   const [feedback, setFeedback] = useState({ rating: 5, keep: "", change: "", notes: "" });
   const [feedbackMemory, setFeedbackMemory] = useState("");
   const deckJson = useMemo(() => (deck ? JSON.stringify(deck.figmaSpec, null, 2) : ""), [deck]);
@@ -85,6 +88,8 @@ export function App() {
     setBusy(true);
     setDeck(null);
     setFigmaPrompt("");
+    setFigmaBuildPlan(null);
+    setFigmaStages([]);
     setAgents({});
     await postSse(
       "/api/generate/stream",
@@ -114,6 +119,33 @@ export function App() {
     });
     const payload = await response.json();
     setFigmaPrompt(payload.handoffPrompt || "");
+  }
+
+  async function prepareFigmaBuild() {
+    if (!deck) return;
+    const response = await fetch("/api/figma/build-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deck })
+    });
+    const payload = (await response.json()) as FigmaBuildPlan;
+    setFigmaBuildPlan(payload);
+    setFigmaPrompt(payload.script);
+    setFigmaStages(payload.stages);
+    const phases = ["build", "review", "revise", "polish", "finalize"];
+    phases.forEach((phase, phaseIndex) => {
+      window.setTimeout(() => {
+        setFigmaStages((prev) =>
+          prev.map((stage) =>
+            stage.phase === phase
+              ? { ...stage, status: "done" }
+              : phases.indexOf(stage.phase) === phaseIndex + 1
+                ? { ...stage, status: "running" }
+                : stage
+          )
+        );
+      }, 260 * (phaseIndex + 1));
+    });
   }
 
   async function saveFeedbackSignal() {
@@ -302,7 +334,29 @@ export function App() {
                   <Figma size={18} />
                   Figma handoff
                 </button>
+                <button className="iconButton" onClick={prepareFigmaBuild}>
+                  <Zap size={18} />
+                  Build in Figma
+                </button>
               </section>
+
+              {figmaBuildPlan ? (
+                <section className="figmaBuildPanel">
+                  <div>
+                    <p className="eyebrow">Desktop Bridge plan</p>
+                    <h2>Parallel Figma Finalizer</h2>
+                  </div>
+                  <div className="stageGrid">
+                    {figmaStages.map((stage) => (
+                      <article key={`${stage.phase}-${stage.slideId}`} className={`stageCard ${stage.status}`}>
+                        <span>{stage.phase}</span>
+                        <strong>{stage.title}</strong>
+                        <p>{stage.summary}</p>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               <section className="slideGrid">
                 {deck.slides.map((slide, index) => (

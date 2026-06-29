@@ -8,6 +8,8 @@ Agentic hackathon demo for turning idea/context plus `gbrain` Supabase output in
 - Pulls `gbrain` context through the Supabase CLI.
 - Streams agent progress and latency into a local React app.
 - Generates a Figma Slides-ready JSON spec plus a Desktop Bridge handoff prompt.
+- Generates an executable Figma Desktop Bridge build script for a 10-slide live finalizer.
+- Shows a 50-stage build/review/revise/polish/finalize board so the Figma burst can be demoed from the product UI.
 - Persists feedback locally so later generations can incorporate what to keep or change.
 
 ## Local Setup
@@ -36,10 +38,12 @@ npm run test:e2e
 npm audit --json
 ```
 
-Current verified coverage: 99.02% statements, 99.00% lines, 100% functions.
+Current verified coverage: 99.13% statements, 99.11% lines, 100% functions, 84.28% branches.
 
 ## Figma Slides Handoff
 
 Live Figma mutation requires Figma Desktop with the Desktop Bridge plugin running. If disconnected:
 
 `Open Figma Desktop -> target file -> Plugins -> Development -> Figma Desktop Bridge -> Run, wait a few seconds, then verify the bridge connection.`
+
+The high-speed demo path is `Generate deck` -> `Build in Figma` -> copy/run the emitted `figma_execute` script through the Desktop Bridge. The verified live burst created 10 slide frames and ran 50 slide-phase actions at 7.82 actions/sec.

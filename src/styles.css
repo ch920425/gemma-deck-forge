@@ -359,6 +359,63 @@ textarea {
   padding: 14px;
 }
 
+.figmaBuildPanel {
+  margin-top: 14px;
+  border: 1px solid #d8d0bf;
+  border-radius: 8px;
+  padding: 14px;
+  background: #17211d;
+  color: #fffdf7;
+}
+
+.figmaBuildPanel h2 {
+  margin: 0 0 12px;
+}
+
+.stageGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stageCard {
+  min-height: 118px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.stageCard.running {
+  border-color: #2d6cdf;
+}
+
+.stageCard.done {
+  border-color: #0e7c66;
+  background: rgba(14, 124, 102, 0.2);
+}
+
+.stageCard span {
+  display: block;
+  color: #9fd8cc;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.stageCard strong {
+  display: block;
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+.stageCard p {
+  margin: 0;
+  color: #dce7df;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .feedbackPanel h2 {
   margin: 0 0 12px;
 }
@@ -427,6 +484,7 @@ textarea {
   .evidenceTray,
   .slideGrid,
   .feedbackGrid,
+  .stageGrid,
   .row {
     grid-template-columns: 1fr;
   }
