@@ -39,7 +39,7 @@ limit ${safeLimit};
 `.trim();
 }
 
-export async function runGbrainQuery(query: string, limit = 8): Promise<GbrainQueryResult> {
+export async function runGbrainQuery(query: string, limit = 8, timeoutMs = 20_000): Promise<GbrainQueryResult> {
   const sql = buildGbrainSql(query, limit);
   const args = ["db", "query", "--output", "json"];
   if (process.env.SUPABASE_DB_URL) {
@@ -53,7 +53,7 @@ export async function runGbrainQuery(query: string, limit = 8): Promise<GbrainQu
   }
   args.push(sql);
 
-  const result = await runCommand("supabase", args, 20_000);
+  const result = await runCommand("supabase", args, timeoutMs);
   if (result.code !== 0) {
     return {
       ok: false,

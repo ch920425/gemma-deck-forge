@@ -5,7 +5,7 @@ Agentic hackathon demo for turning idea/context plus `gbrain` Supabase output in
 ## What It Does
 
 - Runs parallel Gemma agent lanes for story, evidence, visual direction, Figma planning, and judging critique.
-- Pulls `gbrain` context through the Supabase CLI.
+- Streams a context swarm so Supabase `gbrain`, Obsidian vault search, Gemma organization, and local brief lanes work in parallel instead of freezing on one `Querying` state.
 - Streams agent progress and latency into a local React app.
 - Generates a Figma Slides-ready JSON spec plus a Desktop Bridge handoff prompt.
 - Generates an executable Figma Desktop Bridge build script for a 10-slide live finalizer.
@@ -43,7 +43,7 @@ npm run test:e2e
 npm audit --json
 ```
 
-Current verified coverage: 99.13% statements, 99.11% lines, 100% functions, 84.28% branches.
+Current verified coverage: 98.37% statements, 98.66% lines, 99.06% functions, 81.85% branches.
 
 ## Figma Slides Handoff
 

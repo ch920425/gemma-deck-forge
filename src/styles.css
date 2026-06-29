@@ -254,8 +254,77 @@ textarea {
 .evidenceTray,
 .deckHeader,
 .emptyState,
-.feedbackPanel {
+.feedbackPanel,
+.contextSwarmPanel {
   margin-top: 12px;
+}
+
+.contextSwarmPanel {
+  margin-top: 0;
+  margin-bottom: 12px;
+  border: 1px solid #d8d0bf;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbff;
+}
+
+.contextSwarmHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 10px;
+}
+
+.contextSwarmHeader h2 {
+  margin: 0;
+  color: #12235d;
+  font-size: 20px;
+  line-height: 1.08;
+}
+
+.contextSwarmHeader > span {
+  min-width: fit-content;
+  border-radius: 999px;
+  background: #12235d;
+  color: #ffffff;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.contextLaneGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.contextLane {
+  min-height: 126px;
+  border: 1px solid #cbd6f7;
+  border-top: 4px solid #2e5cf2;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.contextLane.running {
+  background: linear-gradient(180deg, #ffffff 0%, #f0f6ff 100%);
+}
+
+.contextLane.done {
+  border-top-color: #05946b;
+}
+
+.contextLane.error {
+  border-top-color: #ff6b57;
+}
+
+.contextLane p {
+  margin: 12px 0;
+  color: #334262;
+  font-size: 13px;
+  line-height: 1.38;
 }
 
 .strip {
@@ -481,6 +550,7 @@ textarea {
   }
 
   .agentBoard,
+  .contextLaneGrid,
   .evidenceTray,
   .slideGrid,
   .feedbackGrid,

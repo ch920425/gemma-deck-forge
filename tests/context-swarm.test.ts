@@ -1,0 +1,176 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  buildContextDigest,
+  buildObsidianSearchPattern,
+  runContextSwarm,
+  runObsidianVaultSearch
+} from "../src/server/contextSwarm";
+import type { ContextLaneResult } from "../src/server/contextSwarm";
+
+let vaultDir = "";
+let previousPrimary: string | undefined;
+let previousBackup: string | undefined;
+let previousKeyList: string | undefined;
+let previousSupabaseWorkdir: string | undefined;
+let previousObsidianVault: string | undefined;
+let previousGbrainTimeout: string | undefined;
+
+beforeEach(async () => {
+  vaultDir = await mkdtemp(path.join(tmpdir(), "gemma-obsidian-vault-"));
+  previousPrimary = process.env.CEREBRAS_API_KEY;
+  previousBackup = process.env.CEREBRAS_BACKUP_API_KEY;
+  previousKeyList = process.env.CEREBRAS_API_KEYS;
+  previousSupabaseWorkdir = process.env.SUPABASE_WORKDIR;
+  previousObsidianVault = process.env.OBSIDIAN_VAULT_PATH;
+  previousGbrainTimeout = process.env.GEMMA_CONTEXT_GBRAIN_TIMEOUT_MS;
+  delete process.env.CEREBRAS_API_KEY;
+  delete process.env.CEREBRAS_BACKUP_API_KEY;
+  delete process.env.CEREBRAS_API_KEYS;
+  process.env.SUPABASE_WORKDIR = vaultDir;
+  process.env.OBSIDIAN_VAULT_PATH = vaultDir;
+  process.env.GEMMA_CONTEXT_GBRAIN_TIMEOUT_MS = "50";
+});
+
+afterEach(async () => {
+  restoreEnv("CEREBRAS_API_KEY", previousPrimary);
+  restoreEnv("CEREBRAS_BACKUP_API_KEY", previousBackup);
+  restoreEnv("CEREBRAS_API_KEYS", previousKeyList);
+  restoreEnv("SUPABASE_WORKDIR", previousSupabaseWorkdir);
+  restoreEnv("OBSIDIAN_VAULT_PATH", previousObsidianVault);
+  restoreEnv("GEMMA_CONTEXT_GBRAIN_TIMEOUT_MS", previousGbrainTimeout);
+  await rm(vaultDir, { recursive: true, force: true });
+});
+
+describe("context swarm helpers", () => {
+  it("builds a bounded rg pattern from the query terms", () => {
+    expect(buildObsidianSearchPattern("Gemma Cerebras Figma deck agentic gbrain")).toBe(
+      "Gemma|Cerebras|Figma|deck|agentic|gbrain"
+    );
+    expect(buildObsidianSearchPattern("a to of")).toContain("Gemma");
+  });
+
+  it("uses a real CLI search over an Obsidian-style vault", async () => {
+    await mkdir(path.join(vaultDir, "Notes"), { recursive: true });
+    await writeFile(
+      path.join(vaultDir, "Notes", "deck.md"),
+      [
+        "# Gemma deck notes",
+        "Cerebras speed makes the Figma slide builder feel live.",
+        "Agentic context organization should keep moving while gbrain is slow."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runObsidianVaultSearch("Gemma Cerebras Figma", 4, vaultDir);
+    expect(result.ok).toBe(true);
+    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits[0].source).toBe("obsidian");
+    expect(result.hits.map((hit) => hit.excerpt).join(" ")).toContain("Cerebras speed");
+  });
+
+  it("returns structured failures for missing vaults and no-match scans", async () => {
+    const missing = await runObsidianVaultSearch("Gemma", 4, path.join(vaultDir, "missing"));
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toBe("missing_obsidian_vault");
+
+    await mkdir(path.join(vaultDir, "Notes"), { recursive: true });
+    await writeFile(path.join(vaultDir, "Notes", "other.md"), "unrelated note", "utf8");
+    const noMatch = await runObsidianVaultSearch("Cerebras", 4, vaultDir);
+    expect(noMatch.ok).toBe(false);
+    expect(noMatch.summary).toContain("did not find");
+  });
+
+  it("streams all context lanes and completes even when live providers fall back", async () => {
+    await mkdir(path.join(vaultDir, "Notes"), { recursive: true });
+    await writeFile(
+      path.join(vaultDir, "Notes", "swarm.md"),
+      "Gemma agents should organize gbrain and Obsidian context while the UI keeps moving.",
+      "utf8"
+    );
+
+    const events: string[] = [];
+    const payloads: unknown[] = [];
+    const results = await runContextSwarm(
+      {
+        idea: "Make querying look like a working context swarm.",
+        query: "Gemma gbrain Obsidian context",
+        existingContext: "manual note",
+        limit: 4
+      },
+      (event, payload) => {
+        events.push(event);
+        payloads.push(payload);
+      }
+    );
+
+    expect(results).toHaveLength(4);
+    expect(events.filter((event) => event === "context_lane_started")).toHaveLength(4);
+    expect(events).toContain("context_complete");
+    expect(results.some((result) => result.laneId === "gemma" && result.ok)).toBe(true);
+    expect(results.some((result) => result.laneId === "obsidian" && result.hits.length > 0)).toBe(true);
+    expect(JSON.stringify(payloads.at(-1))).toContain("context");
+  });
+
+  it("keeps the swarm alive when the Gemma organizer provider path fails", async () => {
+    process.env.CEREBRAS_API_KEY = "csk-invalidcredentialforredaction";
+    await mkdir(path.join(vaultDir, "Notes"), { recursive: true });
+    await writeFile(
+      path.join(vaultDir, "Notes", "fallback.md"),
+      "Gemma context fallback should not block Obsidian evidence.",
+      "utf8"
+    );
+
+    const events: string[] = [];
+    const results = await runContextSwarm(
+      {
+        idea: "Make context querying look alive.",
+        query: "Gemma context fallback Obsidian",
+        limit: 2
+      },
+      (event) => events.push(event)
+    );
+
+    const gemma = results.find((result) => result.laneId === "gemma");
+    expect(gemma?.ok).toBe(false);
+    expect(gemma?.error).toMatch(/Cerebras API|fetch|invalid|401/i);
+    expect(results.some((result) => result.laneId === "obsidian" && result.ok)).toBe(true);
+    expect(events).toContain("context_lane_error");
+    expect(events).toContain("context_complete");
+  }, 30_000);
+
+  it("builds a digest from multiple context lanes", () => {
+    const results: ContextLaneResult[] = [
+      {
+        laneId: "brief",
+        label: "Local context brief",
+        ok: true,
+        summary: "Ready immediately",
+        elapsedMs: 10,
+        hits: [{ source: "brief", title: "Idea", excerpt: "Make querying feel parallel." }]
+      },
+      {
+        laneId: "obsidian",
+        label: "Obsidian vault",
+        ok: true,
+        summary: "Found notes",
+        elapsedMs: 20,
+        hits: [{ source: "obsidian", title: "deck.md:2", excerpt: "Local note evidence." }]
+      }
+    ];
+    const digest = buildContextDigest(results);
+    expect(digest).toContain("Local context brief");
+    expect(digest).toContain("Obsidian vault");
+    expect(digest).toContain("Make querying feel parallel.");
+  });
+});
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}

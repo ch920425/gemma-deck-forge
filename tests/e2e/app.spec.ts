@@ -6,7 +6,10 @@ test("loads the deck workspace and handles Supabase context fallback", async ({ 
   await expect(page.getByRole("button", { name: /Generate deck/i })).toBeVisible();
 
   await page.getByRole("button", { name: /Fetch gbrain context/i }).click();
-  await expect(page.getByTestId("gbrain-status")).toHaveText(/hits|cli unavailable/i, { timeout: 30_000 });
+  await expect(page.getByLabel("context swarm")).toBeVisible({ timeout: 2_000 });
+  await expect(page.locator(".contextLane")).toHaveCount(4, { timeout: 5_000 });
+  await expect(page.getByText(/Gemma organizer/i)).toBeVisible();
+  await expect(page.getByTestId("gbrain-status")).toHaveText(/hits|context ready/i, { timeout: 30_000 });
 });
 
 test("can generate a deck board through the app flow", async ({ page }) => {

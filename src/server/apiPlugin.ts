@@ -4,6 +4,7 @@ import { buildFigmaBuildPlan, buildFigmaHandoffPrompt } from "../shared/figma";
 import { buildBrainstormPrompt } from "../shared/prompts";
 import type { BrainstormResponse, DeckSpec, GenerateRequest, PolishRequest } from "../shared/schema";
 import { callCerebrasJson, fallbackBrainstorm, hasCerebrasKey } from "./cerebras";
+import { runContextSwarm } from "./contextSwarm";
 import { generateDeck, polishDeck } from "./deck";
 import { readFeedbackEntries, readFeedbackMemory, saveFeedback } from "./feedbackStore";
 import { runGbrainQuery } from "./gbrain";
@@ -45,6 +46,23 @@ async function routeApi(req: IncomingMessage, res: ServerResponse): Promise<void
   if (req.method === "POST" && url.pathname === "/api/context/gbrain") {
     const body = (await readJson(req)) as { query?: string; limit?: number };
     sendJson(res, 200, await runGbrainQuery(body.query || "", body.limit || 8));
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/context/swarm/stream") {
+    const body = (await readJson(req)) as { query?: string; idea?: string; existingContext?: string; limit?: number };
+    startSse(res);
+    await runContextSwarm(
+      {
+        query: body.query || "",
+        idea: body.idea || "",
+        existingContext: body.existingContext || "",
+        limit: body.limit || 8
+      },
+      (event, payload) => sendSse(res, event, payload)
+    );
+    sendSse(res, "done", { ok: true });
+    res.end();
     return;
   }
 

@@ -23,6 +23,15 @@ interface AgentState {
   error?: string;
 }
 
+interface ContextLaneState {
+  laneId: string;
+  label: string;
+  status: "running" | "done" | "error";
+  summary: string;
+  elapsedMs?: number;
+  hitCount?: number;
+}
+
 const starterIdea =
   "Build an agentic deck builder for the Cerebras x Gemma hackathon: idea/context plus gbrain output plus live brainstorming to slide outline to Figma Slides.";
 
@@ -34,6 +43,7 @@ export function App() {
   const [gbrainHits, setGbrainHits] = useState<GbrainHit[]>([]);
   const [gbrainStatus, setGbrainStatus] = useState("idle");
   const [gbrainContext, setGbrainContext] = useState("");
+  const [contextLanes, setContextLanes] = useState<Record<string, ContextLaneState>>({});
   const [brainstorm, setBrainstorm] = useState<BrainstormResponse | null>(null);
   const [brainstormNotes, setBrainstormNotes] = useState("");
   const [agents, setAgents] = useState<Record<string, AgentState>>({});
@@ -47,24 +57,27 @@ export function App() {
   const deckJson = useMemo(() => (deck ? JSON.stringify(deck.figmaSpec, null, 2) : ""), [deck]);
 
   async function runGbrain() {
-    setGbrainStatus("running");
-    const response = await fetch("/api/context/gbrain", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: gbrainQuery, limit: 8 })
-    });
-    const payload = await response.json();
-    if (payload.ok) {
-      setGbrainHits(payload.hits || []);
-      const context = (payload.hits || [])
-        .map((hit: GbrainHit) => `${hit.source}: ${hit.title}\n${hit.excerpt}`)
-        .join("\n\n");
-      setGbrainContext(context);
-      setGbrainStatus(`${payload.hits?.length || 0} hits`);
-    } else {
-      setGbrainHits([]);
-      setGbrainStatus("cli unavailable");
-      setGbrainContext(`Supabase CLI query did not return context.\n${payload.error || payload.raw || ""}`);
+    setGbrainStatus("swarm running");
+    setContextLanes({});
+    setGbrainHits([]);
+    try {
+      await postSse(
+        "/api/context/swarm/stream",
+        { query: gbrainQuery, idea, existingContext: gbrainContext, limit: 8 },
+        handleContextEvent
+      );
+    } catch (error) {
+      setGbrainStatus("context fallback ready");
+      setContextLanes((prev) => ({
+        ...prev,
+        fallback: {
+          laneId: "fallback",
+          label: "Fallback brief",
+          status: "error",
+          summary: error instanceof Error ? error.message : String(error)
+        }
+      }));
+      setGbrainContext(idea);
     }
   }
 
@@ -208,6 +221,56 @@ export function App() {
     }
   }
 
+  function handleContextEvent(event: string, payload: unknown) {
+    if (event === "context_lane_started" || event === "context_lane_progress") {
+      const item = payload as { laneId: string; label: string; summary: string };
+      setContextLanes((prev) => ({
+        ...prev,
+        [item.laneId]: {
+          laneId: item.laneId,
+          label: item.label,
+          status: "running",
+          summary: item.summary
+        }
+      }));
+      return;
+    }
+    if (event === "context_lane_complete") {
+      const item = payload as { laneId: string; label: string; summary: string; elapsedMs: number; hits?: GbrainHit[] };
+      setContextLanes((prev) => ({
+        ...prev,
+        [item.laneId]: {
+          laneId: item.laneId,
+          label: item.label,
+          status: "done",
+          summary: item.summary,
+          elapsedMs: item.elapsedMs,
+          hitCount: item.hits?.length || 0
+        }
+      }));
+      return;
+    }
+    if (event === "context_lane_error") {
+      const item = payload as { laneId: string; label: string; summary: string; error?: string };
+      setContextLanes((prev) => ({
+        ...prev,
+        [item.laneId]: {
+          laneId: item.laneId,
+          label: item.label,
+          status: "error",
+          summary: item.error || item.summary
+        }
+      }));
+      return;
+    }
+    if (event === "context_complete") {
+      const item = payload as { hitCount: number; laneCount: number; hits: GbrainHit[]; context: string };
+      setGbrainHits(item.hits || []);
+      setGbrainContext(item.context || "");
+      setGbrainStatus(item.hitCount ? `${item.hitCount} hits across ${item.laneCount} lanes` : "context ready");
+    }
+  }
+
   return (
     <main className="shell">
       <section className="topbar" aria-label="status">
@@ -259,9 +322,9 @@ export function App() {
             <span>Gbrain query</span>
             <input value={gbrainQuery} onChange={(event) => setGbrainQuery(event.target.value)} />
           </label>
-          <button className="secondaryButton" onClick={runGbrain} disabled={gbrainStatus === "running"}>
+          <button className="secondaryButton" onClick={runGbrain} disabled={gbrainStatus === "swarm running"}>
             <Database size={18} />
-            {gbrainStatus === "running" ? "Querying" : "Fetch gbrain context"}
+            {gbrainStatus === "swarm running" ? "Swarming context" : "Fetch gbrain context"}
           </button>
           <p className="fieldStatus" data-testid="gbrain-status">
             {gbrainStatus}
@@ -285,6 +348,33 @@ export function App() {
         </aside>
 
         <section className="mainPanel">
+          {Object.keys(contextLanes).length ? (
+            <section className="contextSwarmPanel" aria-label="context swarm">
+              <div className="contextSwarmHeader">
+                <div>
+                  <p className="eyebrow">Context swarm</p>
+                  <h2>Retrieval keeps moving while Gemma organizes</h2>
+                </div>
+                <span>{gbrainStatus}</span>
+              </div>
+              <div className="contextLaneGrid">
+                {Object.values(contextLanes).map((lane) => (
+                  <article key={lane.laneId} className={`contextLane ${lane.status}`}>
+                    <div className="laneHeader">
+                      <span>{lane.label}</span>
+                      {lane.status === "done" ? <CheckCircle2 size={17} /> : <Radio size={17} />}
+                    </div>
+                    <p>{lane.summary}</p>
+                    <div className="metrics">
+                      {lane.elapsedMs ? <span>{lane.elapsedMs} ms</span> : null}
+                      {typeof lane.hitCount === "number" ? <span>{lane.hitCount} hits</span> : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           <div className="agentBoard">
             {["story", "evidence", "visual", "figma", "critic", "polisher"].map((id) => {
               const agent = agents[id];
