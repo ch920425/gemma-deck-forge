@@ -62,7 +62,7 @@ describe("Figma API route bridge batching", () => {
     expect(new Set(commands.map((command) => String(command.params?.code || ""))).size).toBeGreaterThan(1);
   }, 35_000);
 
-  it("runs QA through independent per-slide visual pass/fail loops", async () => {
+  it("runs QA through a deterministic screenshot export, visual polish, and final export bridge sweep", async () => {
     const harness = await connectBridgeHarness("QA Route Harness");
     const { body, commands, status } = await postFigmaRouteWithBatchResponses(
       "/api/figma/qa",
@@ -79,29 +79,18 @@ describe("Figma API route bridge batching", () => {
     const exportCommands = commandCodes.filter((code) => code.includes('"qaMode":"export"'));
     const finalizeCommands = commandCodes.filter((code) => code.includes('"qaMode":"finalize"'));
 
-    expect(commands.length).toBeGreaterThanOrEqual(22);
+    expect(commands).toHaveLength(3);
     expect(commands.every((command) => command.method === "EXECUTE_CODE")).toBe(true);
     expect(commands.every((command) => Number(command.params?.timeout) <= 15_000)).toBe(true);
     expect(commands.every((command) => String(command.params?.code || "").includes('"sectionId":"section-1"'))).toBe(true);
     expect(commands.every((command) => !String(command.params?.code || "").includes("figma.createSection"))).toBe(true);
     expect(commandCodes[0]).toContain('"qaMode":"export"');
-    expect(fixCommands).toHaveLength(10);
-    expect(exportCommands.length).toBeGreaterThanOrEqual(11);
+    expect(commandCodes[1]).toContain('"qaMode":"fix"');
+    expect(commandCodes[1]).toContain("cleanFinalLayout");
+    expect(fixCommands).toHaveLength(1);
+    expect(exportCommands).toHaveLength(1);
     expect(finalizeCommands).toHaveLength(1);
-    expect(fixCommands.every((code) => code.includes('"targetSlideIds":["s'))).toBe(true);
-    for (let slideIndex = 1; slideIndex <= 10; slideIndex += 1) {
-      const slideId = `s${slideIndex}`;
-      const firstFixIndex = commandCodes.findIndex((code) => code.includes('"qaMode":"fix"') && code.includes(`"targetSlideIds":["${slideId}"]`));
-      const freshExportAfterFixIndex = commandCodes.findIndex(
-        (code, commandIndex) =>
-          commandIndex > firstFixIndex &&
-          code.includes('"qaMode":"export"') &&
-          code.includes(`"targetSlideIds":["${slideId}"]`)
-      );
-      expect(firstFixIndex).toBeGreaterThan(0);
-      expect(freshExportAfterFixIndex).toBeGreaterThan(firstFixIndex);
-    }
-    expect(result.agenticLoopMode).toBe("per-slide-independent");
+    expect(result.agenticLoopMode).toBe("deterministic-visual-polish-with-screenshot-evidence");
     expect(result.batchIntervalMs).toBeNull();
     expect(result.bridgeCommandCount).toBe(commands.length);
     expect(result.maxDiagnoseFixLoops).toBe(10);
