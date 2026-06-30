@@ -1,6 +1,6 @@
 # Gemma Deck Forge
 
-Gemma Deck Forge turns a rough idea into a polished, editable Figma deck with a swarm of Cerebras-powered Gemma 4 31B agents. The workflow is built around visible parallel work: context retrieval, brainstorm synthesis, slide outlining, Figma generation, screenshot-based review, and targeted repair loops.
+Gemma Deck Forge turns a rough idea into a polished, editable Figma deck with a swarm of Cerebras-powered Gemma 4 31B agents. It is not a one-shot slide generator. It is a Figma-native, knowledge-grounded production loop where parallel agents retrieve context, brainstorm, outline, build slides, inspect rendered screenshots, and execute targeted repair passes in the same workflow.
 
 [Watch the 60-second demo](https://www.loom.com/share/3bbedfe9f48c4511a5c635e63b444ff4) · [Open the demo slides PDF](demo_video_slides.pdf) · [Read the benchmark notes](BENCHMARKS.md)
 
@@ -17,11 +17,13 @@ Gemma Deck Forge starts with a simple braindump, then sends specialized agents t
 - inspect slide screenshots for hierarchy, spacing, copy density, brand fit, and visual defects;
 - produce concrete repair instructions and execute follow-up Figma edits.
 
-The important product shift is that deck generation becomes an interactive multi-agent workspace instead of a one-shot prompt. Users can see agents working in parallel, inspect intermediate artifacts, and send manual feedback back into the same QA loop.
+The important product shift is that deck generation becomes an interactive multi-agent workspace instead of a template fill or a one-shot prompt. Users can see agents working in parallel, inspect intermediate artifacts, and send manual feedback back into the same QA loop. The output stays native to Figma, so the final artifact is something a designer, founder, PM, or sales team can keep editing instead of a locked render that has to be rebuilt by hand.
 
 ## Why Cerebras Matters
 
 Most agentic creative tools are bottlenecked by sequential model calls. Gemma Deck Forge is designed for a different inference shape: 10-30 small, specialized Gemma 4 31B agents can collaborate at once because Cerebras keeps latency and throughput low enough for the work to feel live.
+
+The core Cerebras unlock is not simply "faster AI slides." It is a real-time agentic workflow architecture. When the system can afford many concurrent model calls, drafting, critique, visual review, and repair stop being separate overnight batch jobs and become one live production loop.
 
 That changes the UX. A slide deck can be drafted, critiqued, repaired, and re-reviewed while the user is still in flow. The system does not depend on one huge prompt getting everything right; it uses many fast loops to improve the story, content, layout, and polish.
 
@@ -50,6 +52,8 @@ This makes the deck editable and inspectable at every step: the output is a real
 ## Benchmark Snapshot
 
 The benchmark compares the full staged agent workflow, not a single isolated prompt. In this run, Cerebras-powered Gemma 4 31B completed the end-to-end slide-prep workflow in 54 seconds while preserving ten parallel agent lanes.
+
+That timing matters because it crosses a product threshold: the user is no longer waiting for a static generated deck. They are working with a live agent system that can gather context, make creative decisions, render the result, visually judge its own output, and repair the editable Figma artifact before the workflow loses momentum.
 
 ![End-to-end workflow time benchmark](docs/assets/benchmark-workflow-time.png)
 
